@@ -1,0 +1,755 @@
+<title>No. 1 Payoff VR</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Permanent+Marker&display=swap">
+<style>
+/* Layout: full-bleed 3D scene with a thin HUD strip top and a message bar bottom. Single dark look (factory floor). */
+:root{
+  color-scheme: dark;
+  --bg:#171b1c; --hud:rgba(18,23,24,.88); --fg:#e8ebe4; --mute:#9fa9a4;
+  --teal:#4aa39b; --amber:#f0b634; --red:#e0533f; --line:rgba(232,235,228,.14);
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden;font-family:var(--display)}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.hud{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-wrap:wrap;gap:8px;align-items:center;pointer-events:none;z-index:2}
+.brand{display:flex;flex-direction:column;line-height:1;background:var(--hud);border:1px solid var(--line);border-radius:6px;padding:7px 11px;margin-right:auto}
+.brand b{font-size:19px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.brand span{font-size:13px;color:var(--mute);letter-spacing:.06em;text-transform:uppercase;margin-top:3px}
+button{font-family:var(--display);font-size:15px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg);background:var(--hud);border:1px solid var(--line);border-radius:6px;padding:8px 12px;cursor:pointer;pointer-events:auto}
+button:hover{border-color:var(--teal)}
+button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+button.primary{background:var(--teal);color:#0d1514;border-color:transparent;font-weight:700}
+button.primary:disabled{background:#3b4442;color:var(--mute);cursor:default}
+.views{display:flex;gap:6px;flex-wrap:wrap}
+.foot{position:fixed;left:max(16px,env(safe-area-inset-left,0px));right:max(16px,env(safe-area-inset-right,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 12px);display:flex;flex-direction:column;gap:6px;align-items:flex-start;pointer-events:none;z-index:2}
+#msg{font-size:17px;font-weight:600;letter-spacing:.02em;background:var(--hud);border-left:4px solid var(--amber);padding:7px 12px;border-radius:4px;max-width:min(680px,100%)}
+#msg.info{border-left-color:var(--teal)}
+#msg:empty{display:none}
+#hint{font-size:15px;color:var(--mute);background:var(--hud);padding:6px 11px;border-radius:4px;max-width:min(680px,100%)}
+#vrnote{font-size:14px;color:var(--fg);background:var(--hud);border:1px solid var(--amber);padding:8px 12px;border-radius:4px;max-width:min(680px,100%);pointer-events:auto}
+#loading{position:fixed;inset:0;display:grid;place-items:center;font-size:22px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);background:var(--bg);z-index:3}
+@media (max-width:520px){.brand span{display:none} button{padding:7px 9px;font-size:14px}}
+</style>
+
+<canvas id="c" aria-label="3D model of the No. 1 payoff, coil car and main console"></canvas>
+<div class="hud">
+  <div class="brand"><b>No. 1 Payoff</b><span>Coil coating line · entry trainer</span></div>
+  <button id="vr" class="primary" disabled>Checking VR…</button>
+  <div class="views" role="group" aria-label="Viewpoints">
+    <button data-view="console">Console</button>
+    <button data-view="arbor">Arbor</button>
+    <button data-view="pinch">Pinch roll</button>
+    <button data-view="car">Coil car</button>
+  </div>
+</div>
+<div class="foot">
+  <div id="msg"></div>
+  <div id="hint">Drag to look around. Click a panel button to press it, and hold it for jog and travel moves. Follow the steps on the board left of the console.</div>
+  <div id="vrnote" hidden></div>
+</div>
+<div id="loading">Building the line…</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(async function(){
+const T = THREE, PI = Math.PI;
+const FONT = '"Barlow Condensed","Arial Narrow",Arial,sans-serif';
+const MARKER = '"Permanent Marker","Comic Sans MS",cursive';
+try{ await Promise.race([Promise.all([document.fonts.load('700 40px "Barlow Condensed"'),document.fonts.load('600 40px "Barlow Condensed"'),document.fonts.load('40px "Permanent Marker"')]), new Promise(r=>setTimeout(r,2500))]); }catch(e){}
+
+/* ---------- renderer / scene ---------- */
+const canvas = document.getElementById('c');
+const renderer = new T.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = T.sRGBEncoding;
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor'); if(renderer.xr.setFoveation) renderer.xr.setFoveation(1);
+const scene = new T.Scene();
+scene.background = new T.Color(0x2b2f2d);
+scene.fog = new T.Fog(0x2b2f2d, 20, 48);
+const camera = new T.PerspectiveCamera(68, innerWidth/innerHeight, 0.03, 90);
+const dolly = new T.Group(); dolly.add(camera); scene.add(dolly);
+scene.add(new T.HemisphereLight(0xe4ebee, 0x40392f, 0.95));
+const sun = new T.DirectionalLight(0xfff6e8, 0.75); sun.position.set(6,12,8); scene.add(sun);
+const fill = new T.DirectionalLight(0xcfe3ff, 0.25); fill.position.set(-8,6,-6); scene.add(fill);
+
+/* ---------- helpers ---------- */
+const mat = (c,r=.72,m=.18,o={}) => new T.MeshStandardMaterial(Object.assign({color:c,roughness:r,metalness:m},o));
+const B = (w,h,d) => new T.BoxGeometry(w,h,d);
+const Cx = (r,h,s=24) => new T.CylinderGeometry(r,r,h,s).rotateZ(PI/2);   // axis along x
+const Cz = (r,h,s=24) => new T.CylinderGeometry(r,r,h,s).rotateX(PI/2);   // axis along z
+const Cy = (r,h,s=24) => new T.CylinderGeometry(r,r,h,s);
+function add(parent, geo, m, x=0,y=0,z=0){ const o=new T.Mesh(geo,m); o.position.set(x,y,z); parent.add(o); return o; }
+function canvasTex(w,h,fn,opts={}){ const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d'); fn(g,w,h); const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.anisotropy=8; if(opts.repeat){t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(opts.repeat[0],opts.repeat[1]);} t.userData={c,g,fn}; return t; }
+function redraw(t){ const {c,g,fn}=t.userData; g.clearRect(0,0,c.width,c.height); fn(g,c.width,c.height); t.needsUpdate=true; }
+function fit(g,text,x,y,maxW,size,weight='700',family=FONT){ let s=size; g.font=`${weight} ${s}px ${family}`; while(g.measureText(text).width>maxW && s>8){ s--; g.font=`${weight} ${s}px ${family}`; } g.fillText(text,x,y); return s; }
+function speckle(g,w,h,n,base,spread,alpha){ for(let i=0;i<n;i++){ const v=base+Math.random()*spread; g.fillStyle=`rgba(${v},${v},${v-6},${Math.random()*alpha})`; g.fillRect(Math.random()*w,Math.random()*h,1+Math.random()*3,1+Math.random()*3);} }
+const UP = new T.Vector3(0,1,0), tmpV=new T.Vector3(), tmpV2=new T.Vector3(), tmpQ=new T.Quaternion();
+function setBetween(mesh,a,b){ tmpV.subVectors(b,a); const L=tmpV.length(); mesh.position.copy(a).addScaledVector(tmpV,.5); mesh.quaternion.setFromUnitVectors(UP,tmpV.normalize()); mesh.scale.set(1,Math.max(L,1e-4),1); }
+function hydCyl(parent,rb=.05,rr=.022){ const barrel=add(parent,Cy(rb,1,14),MAT.black); const rod=add(parent,Cy(rr,1,12),MAT.chrome); return (a,b,bl=.6)=>{ setBetween(rod,a,b); const L=a.distanceTo(b); tmpV2.subVectors(b,a).normalize().multiplyScalar(Math.min(bl,L*.92)).add(a); setBetween(barrel,a,tmpV2); }; }
+
+/* ---------- textures & materials ---------- */
+const grime = (base,n=1)=>canvasTex(512,512,(g,w,h)=>{ g.fillStyle=base; g.fillRect(0,0,w,h); speckle(g,w,h,3500*n,60,70,.22); g.strokeStyle='rgba(40,30,20,.18)'; for(let i=0;i<60*n;i++){ g.lineWidth=Math.random()*2; g.beginPath(); const x=Math.random()*w,y=Math.random()*h; g.moveTo(x,y); g.lineTo(x+(Math.random()-.5)*120,y+(Math.random()-.5)*40); g.stroke(); } for(let i=0;i<14*n;i++){ g.fillStyle=`rgba(${110+Math.random()*40},${60+Math.random()*20},30,${Math.random()*.25})`; g.beginPath(); g.ellipse(Math.random()*w,Math.random()*h,Math.random()*28,Math.random()*12,Math.random()*3,0,7); g.fill(); } });
+const tealTex = grime('#4a9c95'), blueTex = grime('#2d4f97',.6), consoleTex = grime('#aaa79d',1.4);
+const MAT = {
+  teal: mat(0xffffff,.72,.2,{map:tealTex}), tealPlain: mat(0x3f948e,.72,.2),
+  blue: mat(0xffffff,.6,.25,{map:blueTex}), yellow: mat(0xe2bd1d,.6,.12),
+  steel: mat(0x9aa1a5,.38,.8), chrome: mat(0xe2e6e9,.16,1), dark: mat(0x2a2d2f,.6,.45),
+  black: mat(0x141516,.5,.25), rubber: mat(0x1b1b1b,.92,0), mandrel: mat(0x45494c,.38,.78),
+  rust: mat(0x6e3b2d,.82,.2), console: mat(0xffffff,.5,.55,{map:consoleTex}), plug: mat(0x8d8c86,.6,.5),
+  felt: mat(0xe6e1d6,.95,0), cream: mat(0xd8d2c0,.85,0), grey: mat(0x8b8f90,.8,.2), white: mat(0xe9e9e4,.7,.05),
+  hub: mat(0x3e6fc1,.55,.3), red: mat(0xb8291c,.5,.15), orange: mat(0xd2602a,.6,.1)
+};
+const coilSide = canvasTex(512,64,(g,w,h)=>{ const gr=g.createLinearGradient(0,0,w,0); gr.addColorStop(0,'#c2c6c9'); gr.addColorStop(.5,'#d6d9db'); gr.addColorStop(1,'#bfc3c6'); g.fillStyle=gr; g.fillRect(0,0,w,h); for(let i=0;i<120;i++){ g.fillStyle=`rgba(255,255,255,${Math.random()*.12})`; g.fillRect(Math.random()*w,0,Math.random()*5,h);} for(let i=0;i<60;i++){ g.fillStyle=`rgba(70,75,80,${Math.random()*.12})`; g.fillRect(Math.random()*w,0,Math.random()*3,h);} });
+const coilEnd = canvasTex(512,512,(g,w,h)=>{ g.fillStyle='#b9bdc1'; g.fillRect(0,0,w,h); for(let r=77;r<256;r+=1.4){ const v=150+Math.random()*70; g.strokeStyle=`rgb(${v},${v+3},${v+6})`; g.lineWidth=1.2; g.beginPath(); g.arc(256,256,r,0,7); g.stroke(); } g.strokeStyle='rgba(30,140,60,.9)'; g.lineWidth=9; g.beginPath(); g.moveTo(256,256-80); g.lineTo(256,0); g.stroke(); g.strokeStyle='rgba(40,40,40,.6)'; g.lineWidth=3; g.beginPath(); g.moveTo(256+78,256); g.lineTo(512,256); g.stroke(); });
+const MATcoil = mat(0xffffff,.3,.72,{map:coilSide});
+
+/* ---------- state ---------- */
+const MCX = -0.05;            // mandrel centre (arbor-group local x)
+const CL = 1.30;              // mandrel centreline height (m)
+const COIL_R = .85, COIL_RI = .254, COIL_W = 1.2;
+const CAR_HOME = 4.6, FEED_LEN = 1.6, SHEAR_D = .62;
+const NIP = new T.Vector3(0,1.25,2.9);
+function fresh(){ return { estop:false, hydA:false, hydB:false, air:true, lineRun:false, arborSel:2, laser:false,
+  carX:CAR_HOME, carLift:0, coilOnCar:true, coilOnMandrel:false, mandrelExp:1, mandrelTarget:'EXP', mAngle:0, coilAngle:0,
+  hd:0, peelUp:0, peelExt:0, carriage:.5, pinchClosed:false, pinchGap:1, thread:0, feed:0, cropped:false, adj:0, shearAnim:0,
+  jogging:false, moving:false }; }
+let S = fresh();
+const carStop = () => S.adj + MCX;
+const enterX = () => S.adj + 0.85 + COIL_W/2 + 0.02;
+const carCY = () => 1.06 + 0.24*S.carLift;
+const carSupporting = () => Math.abs(S.carX-carStop())<0.004 && S.carLift>=0.999;
+
+/* ---------- messages / audio ---------- */
+let msg = {text:'',level:'info',t:-1e9};
+const msgEl=document.getElementById('msg');
+let actx=null;
+function tone(f,d,type='square',vol=.04){ try{ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)(); const o=actx.createOscillator(), g=actx.createGain(); o.type=type; o.frequency.value=f; g.gain.value=vol; g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+d); o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime+d);}catch(e){} }
+function say(text, level='alarm'){ const now=performance.now(); if(text===msg.text && now-msg.t<2500) return false; msg={text,level,t:now}; msgEl.textContent=text; msgEl.className=level; if(level==='alarm'){ tone(520,.25,'sawtooth',.05); hapticAll(.8,80);} return false; }
+function hydOK(){ if(S.estop) return say('E-STOP is active. Press the E-STOP again to reset it.'); if(!S.hydA) return say('Hydraulic pump A is off. Press HYD A ON on the left panel.'); return true; }
+
+/* ---------- factory ---------- */
+const floorTex = canvasTex(512,512,(g,w,h)=>{ g.fillStyle='#5d5f5b'; g.fillRect(0,0,w,h); speckle(g,w,h,9000,60,60,.3); g.fillStyle='rgba(25,25,25,.15)'; for(let i=0;i<10;i++){ g.beginPath(); g.ellipse(Math.random()*w,Math.random()*h,20+Math.random()*80,10+Math.random()*40,Math.random()*3,0,7); g.fill(); } g.strokeStyle='rgba(20,20,20,.5)'; g.lineWidth=2; g.strokeRect(0,0,w,h); },{repeat:[14,10]});
+add(scene,new T.PlaneGeometry(64,44).rotateX(-PI/2),mat(0xffffff,.92,.05,{map:floorTex}),2,0,0);
+const checker = canvasTex(128,128,(g,w,h)=>{ g.fillStyle='#7d8083'; g.fillRect(0,0,w,h); g.fillStyle='#a6a9ab'; for(let y=0;y<h;y+=16) for(let x=(y/16%2)*8;x<w;x+=16){ g.save(); g.translate(x+4,y+4); g.rotate(.6); g.fillRect(-5,-1.5,10,3); g.restore(); } },{repeat:[24,1]});
+const checkerMat = mat(0xffffff,.5,.6,{map:checker});
+// coil car rail pit
+add(scene,new T.PlaneGeometry(8.6,1.5).rotateX(-PI/2),mat(0x2e302f,.9,.1),2.9,.003,0);
+for(const z of [-.55,.55]) add(scene,B(8.6,.05,.07),MAT.steel,2.9,.025,z);
+for(const z of [-.98,.98]) add(scene,new T.PlaneGeometry(8.6,.34).rotateX(-PI/2),checkerMat,2.9,.004,z);
+const redPaint = canvasTex(256,128,(g,w,h)=>{ for(let i=0;i<220;i++){ g.fillStyle=`rgba(200,40,30,${Math.random()*.6})`; g.fillRect(Math.random()*w,Math.random()*h,Math.random()*12,Math.random()*4);} });
+add(scene,new T.PlaneGeometry(2.4,1.2).rotateX(-PI/2),new T.MeshBasicMaterial({map:redPaint,transparent:true,depthWrite:false}),5.9,.005,1.6);
+// building columns, roof, walls
+for(const x of [-9,-1,7,15]) for(const z of [-10,12]){ add(scene,B(.45,9.4,.45),MAT.rust,x,4.7,z); }
+for(const x of [-9,-1,7,15]) add(scene,B(.3,.55,22.5),MAT.rust,x,9.1,1);
+for(let z=-10;z<=12;z+=2.75) add(scene,B(24.5,.12,.12),MAT.rust,3,8.9,z);
+add(scene,new T.PlaneGeometry(26,24).rotateX(PI/2),mat(0x3a3d3c,.9,.1),3,9.5,1);
+const wallTex = canvasTex(256,256,(g,w,h)=>{ g.fillStyle='#b9bcbd'; g.fillRect(0,0,w,h); for(let x=0;x<w;x+=16){ g.fillStyle='rgba(60,60,60,.18)'; g.fillRect(x,0,5,h);} g.fillStyle='rgba(255,255,255,.75)'; g.fillRect(0,20,w,46); for(let x=0;x<w;x+=32){ g.fillStyle='#596060'; g.fillRect(x,20,3,46);} },{repeat:[10,1]});
+add(scene,new T.PlaneGeometry(26,9.4),mat(0xffffff,.85,.1,{map:wallTex}),3,4.7,-10.8);
+const wallR = add(scene,new T.PlaneGeometry(24,9.4),mat(0xffffff,.85,.1,{map:wallTex}),15.6,4.7,1); wallR.rotation.y=-PI/2;
+const wallL = add(scene,new T.PlaneGeometry(24,9.4),mat(0xffffff,.85,.1,{map:wallTex}),-9.6,4.7,1); wallL.rotation.y=PI/2;
+const lampMat = new T.MeshBasicMaterial({color:0xf4f7f2});
+for(const x of [-5,3,11]) for(const z of [-6,0,6]) add(scene,B(1.4,.06,.18),lampMat,x,8.2,z);
+// overhead crane
+add(scene,B(.5,.7,20),MAT.yellow,3.2,7.6,1); const hoist=add(scene,B(.6,.5,.6),MAT.red,3.2,7.0,-2.8); add(scene,Cy(.012,3.2),MAT.dark,3.2,5.2,-2.8); add(scene,B(.18,.25,.1),MAT.red,3.2,3.6,-2.8);
+// guardrails
+function rail(x1,z1,x2,z2){ const a=new T.Vector3(x1,0,z1), b=new T.Vector3(x2,0,z2); const L=a.distanceTo(b), n=Math.max(1,Math.round(L/1.2));
+  for(let i=0;i<=n;i++){ const p=a.clone().lerp(b,i/n); add(scene,B(.06,1.07,.06),MAT.yellow,p.x,.535,p.z);}
+  for(const y of [1.05,.55]){ const m=add(scene,B(.05,.05,L),MAT.yellow,0,y,0); m.position.set((x1+x2)/2,y,(z1+z2)/2); m.rotation.y=Math.atan2(x2-x1,z2-z1);} }
+rail(-3.1,-3.0,3.0,-3.0); rail(-3.1,-3.0,-3.1,2.2); rail(1.3,1.9,1.3,1.2);
+// background coils & cores
+function makeCoil(R,ri,w,tint=0xffffff){ const g=new T.Group(); const m=MATcoil.clone(); m.color.setHex(tint);
+  add(g,new T.CylinderGeometry(R,R,w,56,1,true).rotateZ(PI/2),m);
+  add(g,new T.CylinderGeometry(ri,ri,w,32,1,true).rotateZ(PI/2),mat(0x8e9195,.4,.7,{side:T.BackSide}));
+  const em = mat(tint,.42,.6,{map:coilEnd}); const ring=new T.RingGeometry(ri,R,56,1);
+  const e1=add(g,ring,em,w/2,0,0); e1.rotation.y=PI/2; const e2=add(g,ring,em,-w/2,0,0); e2.rotation.y=-PI/2;
+  add(g,B(w*1.002,.006,.04),mat(0x6d7276,.5,.6),0,R,0); return g; }
+for(const [x,z,t] of [[10,-6,0xffffff],[11.8,-6,0xd9c39a],[10,-3.6,0xf0f0f0],[11.8,-3.6,0xb08a6a],[10,6,0xffffff],[11.8,7.4,0xd9c39a]]){ const c=makeCoil(.8,.254,1.2,t); c.position.set(x,.8,z); c.rotation.y=PI/2; scene.add(c); add(scene,B(1.3,.08,1.5),MAT.yellow,x,.04,z); }
+for(const [x,z,h,r] of [[-2.5,1.4,1.05,.27],[-2.0,1.75,.95,.27],[-2.6,2.1,.35,.3],[-1.9,2.3,.35,.3]]) add(scene,new T.CylinderGeometry(r,r,h,28,1,true),mat(0x232425,.7,.3,{side:T.DoubleSide}),x,h/2,z);
+add(scene,new T.CylinderGeometry(.27,.24,.85,24),mat(0x46596a,.8,.1),-1.6,.425,3.3);
+// downstream leveler / entry section
+const lev=new T.Group(); scene.add(lev); lev.position.set(0,0,6.9);
+add(lev,B(2.4,1.25,2.6),MAT.teal,0,.62,0); add(lev,B(2.0,.5,2.2),MAT.tealPlain,0,1.5,0); add(lev,B(2.6,.08,3.0),MAT.dark,0,1.8,0);
+for(const x of [-1.3,1.3]) for(const z of [-1.5,1.5]) add(lev,B(.06,1.07,.06),MAT.yellow,x,2.37,z);
+add(lev,B(2.6,.05,.05),MAT.yellow,0,2.9,-1.5); add(lev,B(2.6,.05,.05),MAT.yellow,0,2.9,1.5); add(lev,B(.05,.05,3),MAT.yellow,-1.3,2.9,0); add(lev,B(.05,.05,3),MAT.yellow,1.3,2.9,0);
+// exit table between shear and leveler
+add(scene,B(1.5,.06,1.7),MAT.steel,0,1.18,4.45); add(scene,B(1.3,1.12,1.4),MAT.teal,0,.56,4.45);
+
+/* ---------- ARBOR (No. 1 payoff) ---------- */
+const arbor = new T.Group(); scene.add(arbor);
+add(arbor,B(1.1,.22,1.8),MAT.tealPlain,-1.45,.11,0);
+add(arbor,B(1.0,1.55,1.5),MAT.teal,-1.45,.99,0);
+add(arbor,B(.85,.45,1.2),MAT.teal,-1.5,1.95,0);
+add(arbor,Cx(.33,.16,32),MAT.dark,-.87,CL,0);
+add(arbor,Cx(.28,.6,28),MAT.tealPlain,-2.15,1.95,.35); // drive motor
+for(let i=0;i<6;i++) add(arbor,B(.12,.08,.12),MAT.dark,-1.95+i*.05,.4+i*.2,.76);
+const spin = new T.Group(); spin.position.set(MCX+.05,CL,0); arbor.add(spin);
+add(spin,Cx(.19,1.72,24),MAT.dark,-.05,0,0);
+const leaves=[];
+for(let i=0;i<4;i++){ const start=i*PI/2+.1, len=PI/2-.2; const geo=new T.CylinderGeometry(.235,.235,1.7,10,1,false,start,len).rotateZ(PI/2); const m=add(spin,geo,MAT.mandrel,-.05,0,0); const mid=start+len/2; m.userData.dir=new T.Vector3(0,Math.sin(mid),Math.cos(mid)); leaves.push(m);
+  const dog=add(spin,B(.14,.07,.09),MAT.mandrel,.78,0,0); dog.userData.dir=m.userData.dir; dog.userData.r=.27; leaves.push(dog); }
+add(spin,Cx(.2,.09,28),MAT.hub,.85,0,0);
+for(let i=0;i<5;i++){ const a=i*2*PI/5; add(spin,Cx(.025,.05,10),MAT.dark,.91,Math.sin(a)*.12,Math.cos(a)*.12); }
+add(spin,Cx(.055,.08,6),MAT.steel,.93,0,0);
+// hold-down roll
+add(arbor,B(.32,3.7,.32),MAT.teal,MCX,1.85,-1.95);
+add(arbor,B(.4,.4,.4),MAT.tealPlain,MCX,3.5,-1.95);
+const hdPivot=new T.Group(); hdPivot.position.set(MCX,3.5,-1.95); arbor.add(hdPivot);
+const HD_L=2.2;
+for(const x of [-.62,.62]) add(hdPivot,B(.08,.2,HD_L),MAT.teal,x,0,HD_L/2);
+add(hdPivot,Cx(.07,1.32,16),MAT.tealPlain,0,0,.25);
+add(hdPivot,B(1.3,.1,.1),MAT.tealPlain,0,0,1.15);
+const hdRoll=add(hdPivot,Cx(.15,1.18,28),MAT.rubber,0,0,HD_L);
+add(hdPivot,Cx(.05,1.36,12),MAT.steel,0,0,HD_L);
+const hdCyl=hydCyl(arbor,.07,.03);
+// warning plate on arm
+const warnTex=canvasTex(256,256,(g,w,h)=>{ g.fillStyle='#f2efe4'; g.fillRect(0,0,w,h); g.fillStyle='#e07a1f'; g.fillRect(0,0,w,60); g.fillStyle='#111'; fit(g,'WARNING',w/2-60,44,140,38); g.textAlign='left'; g.font=`600 22px ${FONT}`; ['Keep clear while','roll is moving.','Lock out before','servicing.'].forEach((s,i)=>g.fillText(s,18,100+i*30)); });
+const wp=add(hdPivot,new T.PlaneGeometry(.18,.18),new T.MeshStandardMaterial({map:warnTex}),.665,.0,.9); wp.rotation.y=PI/2;
+
+/* ---------- PEELER / threading table ---------- */
+const peelBase=new T.Group(); scene.add(peelBase); peelBase.position.set(MCX,0,0);
+add(peelBase,B(1.3,.42,.8),MAT.teal,0,.21,2.3);
+add(peelBase,B(1.36,.06,.06),MAT.yellow,0,.42,1.92);
+const peelPivot=new T.Group(); peelPivot.position.set(0,.6,2.1); peelBase.add(peelPivot);
+const peelPlate=new T.Group(); peelPivot.add(peelPlate);
+add(peelPlate,B(1.25,.03,1.15),MAT.steel,0,0,-.575);
+for(const x of [-.635,.635]) add(peelPlate,B(.03,.08,1.15),MAT.yellow,x,-.02,-.575);
+add(peelPlate,B(1.1,.08,1.0),MAT.tealPlain,0,-.07,-.55);
+add(peelPlate,Cx(.035,1.24,14),MAT.chrome,0,0,-1.15);
+for(const x of [-.25,.25]) add(peelPlate,Cx(.045,.18,14),MAT.black,x,.01,-.95);
+const peelCylA=hydCyl(peelBase,.05,.022), peelCylB=hydCyl(peelBase,.05,.022);
+// carriage post
+const carriagePost=add(peelBase,B(.2,.6,.2),MAT.tealPlain,0,.3,2.1);
+
+/* ---------- PINCH ROLL STAND + SHEAR ---------- */
+const stand=new T.Group(); scene.add(stand);
+for(const x of [-.86,.86]) add(stand,B(.26,3.3,.36),MAT.blue,x,1.65,2.9);
+add(stand,B(1.98,.32,.42),MAT.blue,0,3.3,2.9);
+add(stand,B(2.2,.18,.6),MAT.tealPlain,0,.09,2.9);
+const lowRoll=add(stand,Cx(.1,1.48,28),MAT.steel,0,NIP.y-.1,NIP.z);
+const upRoll=add(stand,Cx(.1,1.48,28),MAT.steel,0,NIP.y+.1,NIP.z);
+const chocks=[]; for(const x of [-.86,.86]){ chocks.push(add(stand,B(.3,.22,.3),MAT.dark,x,NIP.y+.1,NIP.z)); }
+const pinchCyl=[hydCyl(stand,.06,.03),hydCyl(stand,.06,.03)];
+// yellow guard and nameplate on operator side
+add(stand,B(.06,1.9,.86),MAT.yellow,1.02,1.75,2.9);
+const gw=add(stand,new T.PlaneGeometry(.4,1.25),mat(0x1d2427,.15,.4,{transparent:true,opacity:.85}),1.056,1.85,2.9); gw.rotation.y=PI/2;
+const nameTex=canvasTex(256,96,(g,w,h)=>{ g.fillStyle='#c4562a'; g.fillRect(0,0,w,h); g.strokeStyle='#f6eadc'; g.lineWidth=4; g.strokeRect(6,6,w-12,h-12); g.fillStyle='#f6eadc'; g.textAlign='center'; fit(g,'NO. 1 PINCH ROLL',w/2,60,220,40); });
+const np=add(stand,new T.PlaneGeometry(.26,.1),new T.MeshStandardMaterial({map:nameTex}),1.056,2.62,2.9); np.rotation.y=PI/2;
+const dangerTex=canvasTex(128,128,(g,w,h)=>{ g.fillStyle='#f4f1e8'; g.fillRect(0,0,w,h); g.fillStyle='#c8261b'; g.fillRect(0,0,w,36); g.fillStyle='#fff'; g.textAlign='center'; fit(g,'DANGER',w/2,28,110,28); g.fillStyle='#111'; fit(g,'Pinch point',w/2,72,110,24,'600'); g.beginPath(); g.arc(44,104,14,0,7); g.arc(84,104,14,0,7); g.stroke(); });
+const dp=add(stand,new T.PlaneGeometry(.1,.1),new T.MeshStandardMaterial({map:dangerTex}),1.056,1.05,2.75); dp.rotation.y=PI/2;
+// amber beacon
+add(stand,B(.12,.05,.12),MAT.dark,1.12,2.05,3.25); const beacon=add(stand,Cy(.055,.12,18),new T.MeshStandardMaterial({color:0xf2a12a,emissive:0xf28a12,emissiveIntensity:.1,transparent:true,opacity:.9}),1.12,2.14,3.25);
+// shear
+const shear=new T.Group(); scene.add(shear); shear.position.set(0,0,NIP.z+SHEAR_D);
+for(const x of [-.82,.82]) add(shear,B(.16,1.75,.34),MAT.tealPlain,x,.875,0);
+add(shear,B(1.8,.26,.36),MAT.tealPlain,0,1.86,0);
+add(shear,B(1.5,.12,.3),MAT.dark,0,1.12,0);
+const blade=add(shear,B(1.55,.18,.05),MAT.steel,0,1.48,.03);
+// convex safety mirror
+add(scene,Cy(.03,2.8),MAT.dark,2.0,1.4,-1.6); const mirror=add(scene,new T.SphereGeometry(.35,24,12,0,PI*2,0,.5),mat(0xc8ccd0,.05,1),2.0,2.85,-1.6); mirror.rotation.x=PI/2+.3; mirror.rotation.z=.6;
+
+/* ---------- strip ---------- */
+const stripMat=mat(0xffffff,.28,.78,{map:coilSide,side:T.DoubleSide});
+const stripG=new T.BoxGeometry(1.18,.004,1).translate(0,0,.5);
+const stripA=add(scene,stripG,stripMat), stripB=add(scene,stripG,stripMat);
+const scraps=[];
+
+/* ---------- COIL + COIL CAR ---------- */
+const coil=makeCoil(COIL_R,COIL_RI,COIL_W); scene.add(coil);
+const car=new T.Group(); scene.add(car);
+add(car,B(1.6,.25,1.3),MAT.teal,0,.15,0);
+add(car,B(.58,2.0,1.3),MAT.teal,1.12,1.02,0);
+add(car,B(.6,.06,1.34),MAT.tealPlain,1.12,2.03,0);
+const meshTex=canvasTex(128,128,(g,w,h)=>{ g.fillStyle='rgba(20,22,22,.55)'; g.fillRect(0,0,w,h); g.strokeStyle='#8f969a'; g.lineWidth=2; for(let i=-h;i<w;i+=10){ g.beginPath(); g.moveTo(i,0); g.lineTo(i+h,h); g.stroke(); g.beginPath(); g.moveTo(i+h,0); g.lineTo(i,h); g.stroke(); } },{repeat:[3,6]});
+const mp=add(car,new T.PlaneGeometry(1.1,1.6),new T.MeshStandardMaterial({map:meshTex,transparent:true,roughness:.6,metalness:.5}),1.415,1.05,0); mp.rotation.y=PI/2;
+for(const x of [-.6,.6]) add(car,Cz(.09,1.34,16),MAT.dark,x,.1,0);
+const lift=add(car,B(.55,1,.45),MAT.steel,0,.5,0);
+const saddle=new T.Group(); car.add(saddle);
+for(const s of [1,-1]){ const p=add(saddle,B(1.0,.05,.52),MAT.yellow,0,-.736,s*.425); p.rotation.x=-s*PI/6; const f=add(saddle,B(1.04,.012,.56),MAT.felt,0,-.705,s*.41); f.rotation.x=-s*PI/6; }
+add(saddle,B(.9,.18,.35),MAT.tealPlain,0,-.86,0);
+add(car,B(.03,.22,.01),MAT.yellow,0,.18,.656);
+// scale indicator
+const scaleTex=canvasTex(256,96,(g,w,h)=>{ g.fillStyle='#2a1514'; g.fillRect(0,0,w,h); g.fillStyle=S.coilOnCar?'#ff3b25':'#7a2318'; g.textAlign='right'; g.font=`700 64px "Courier New",monospace`; g.fillText(S.coilOnCar?'18450':'    0',w-20,68); g.font=`600 18px ${FONT}`; g.fillStyle='#ff7b60'; g.fillText('LB',w-4,90); });
+add(car,B(.34,.17,.07),MAT.steel,1.12,1.84,.68);
+add(car,new T.PlaneGeometry(.26,.095),new T.MeshBasicMaterial({map:scaleTex}),1.12,1.845,.716);
+// coiled pendant cord
+const helix=[]; for(let i=0;i<=160;i++){ const t=i/160; helix.push(new T.Vector3(.9+Math.cos(t*PI*44)*.025, 1.15-t*.65, .7+Math.sin(t*PI*44)*.025)); }
+add(car,new T.TubeGeometry(new T.CatmullRomCurve3(helix),400,.006,5),mat(0xd6a326,.6,.1));
+
+/* ---------- laser ---------- */
+const laserMat=new T.MeshBasicMaterial({color:0xff2a1a,transparent:true,opacity:.85});
+const laserFloor=add(scene,B(.012,.004,2.4),laserMat,0,.012,0);
+const laserBeam=add(scene,B(.006,1,.006),new T.MeshBasicMaterial({color:0xff3322,transparent:true,opacity:.35}),0,0,0);
+const laserHead=add(scene,B(.14,.14,.2),MAT.dark,0,4.6,0); add(scene,B(.04,.04,1.95),MAT.dark,0,4.66,-.98);
+
+/* ---------- CONTROLS framework ---------- */
+const pickables=[], ctrls=[], holdCount={};
+const hitMat=new T.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false});
+const ATLAS_W=2048, CELL_W=256, CELL_H=80, ATLAS_COLS=8; let atlasN=0; const atlasIdx={};
+const atlasTex=canvasTex(ATLAS_W,2048,()=>{}); const atlasG=atlasTex.userData.g;
+function atlasCell(text){ if(text in atlasIdx) return atlasIdx[text]; const i=atlasN++; const x=(i%ATLAS_COLS)*CELL_W, y=Math.floor(i/ATLAS_COLS)*CELL_H; const g=atlasG;
+  g.save(); g.translate(x,y); const w=CELL_W,h=CELL_H; const gr=g.createLinearGradient(0,0,0,h); gr.addColorStop(0,'#ddd3ad'); gr.addColorStop(1,'#c4b88f'); g.fillStyle=gr; g.fillRect(0,0,w,h); speckle(g,w,h,160,60,60,.25);
+  g.strokeStyle='#5c5236'; g.lineWidth=3; g.strokeRect(2,2,w-4,h-4); g.fillStyle='#16140f'; g.textAlign='center'; const L=text.split('\n'); const sz=L.length>1?31:40; L.forEach((s,k)=>fit(g,s,w/2,L.length>1?(34+k*33):54,w-14,sz)); g.restore();
+  atlasTex.needsUpdate=true; return atlasIdx[text]=i; }
+const panelBatches=new Map();
+function batch(panel){ if(!panelBatches.has(panel)) panelBatches.set(panel,{bezel:[],plug:[],leg:[]}); return panelBatches.get(panel); }
+const geoBezel=Cz(.0195,.012,22), geoPlug=Cz(.021,.006,20);
+function finalizeBatches(){ const m4=new T.Matrix4();
+  for(const [panel,b] of panelBatches){
+    for(const [key,geo,m] of [['bezel',geoBezel,MAT.chrome],['plug',geoPlug,MAT.plug]]){ const list=b[key]; if(!list.length) continue; const im=new T.InstancedMesh(geo,m,list.length); list.forEach((p,i)=>{ m4.makeTranslation(p[0],p[1],p[2]); im.setMatrixAt(i,m4); }); panel.add(im); }
+    if(b.leg.length){ const pos=[],uv=[],nor=[],idx=[]; const hw=.037, hh=.0115;
+      b.leg.forEach(([u,v,cell],i)=>{ const x=(cell%ATLAS_COLS)*CELL_W/ATLAS_W, y=Math.floor(cell/ATLAS_COLS)*CELL_H/2048; const u0=x,u1=x+CELL_W/ATLAS_W,vt=1-y,vb=1-y-CELL_H/2048;
+        pos.push(u-hw,v-hh,.0015, u+hw,v-hh,.0015, u+hw,v+hh,.0015, u-hw,v+hh,.0015); uv.push(u0,vb,u1,vb,u1,vt,u0,vt); for(let k=0;k<4;k++) nor.push(0,0,1); const o=i*4; idx.push(o,o+1,o+2,o,o+2,o+3); });
+      const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setAttribute('uv',new T.Float32BufferAttribute(uv,2)); g.setAttribute('normal',new T.Float32BufferAttribute(nor,3)); g.setIndex(idx);
+      panel.add(new T.Mesh(g,legendMat)); } } }
+const legendMat=new T.MeshStandardMaterial({map:atlasTex,roughness:.6,metalness:.15});
+const legendCache={};
+function legend(text){ if(legendCache[text]) return legendCache[text];
+  const t=canvasTex(256,96,(g,w,h)=>{ const gr=g.createLinearGradient(0,0,0,h); gr.addColorStop(0,'#ddd3ad'); gr.addColorStop(1,'#c4b88f'); g.fillStyle=gr; g.fillRect(0,0,w,h); speckle(g,w,h,250,60,60,.25); g.strokeStyle='#5c5236'; g.lineWidth=3; g.strokeRect(2,2,w-4,h-4); g.fillStyle='#16140f'; g.textAlign='center'; const L=text.split('\n'); const sz=L.length>1?36:44; L.forEach((s,i)=>fit(g,s,w/2,L.length>1?(40+i*40):60,w-16,sz)); });
+  return legendCache[text]=t; }
+const capMats={black:mat(0x161718,.45,.3), red:mat(0xa3271c,.45,.2), green:mat(0x1f6e34,.45,.2), white:mat(0xd9d6cc,.5,.1)};
+const LENS={green:0x2bd457,red:0xff2d1f,blue:0x2f73ff,yellow:0xf2cf28,white:0xf4efe0};
+function addCtrl(panel,u,v,d){
+  const g=new T.Group(); g.position.set(u,v,0); panel.add(g);
+  const c={d,g,down:0,val:0}; const k=d.kind||'push';
+  const bt=batch(panel);
+  if(d.label && k!=='estop'){ bt.leg.push([u,v+.036,atlasCell(d.label)]); }
+  if(k==='plug'){ bt.plug.push([u,v,.003]); return c; }
+  if(k==='estop'){ const ring=canvasTex(256,256,(gg,w,h)=>{ gg.fillStyle='#e8b81c'; gg.beginPath(); gg.arc(128,128,126,0,7); gg.fill(); gg.fillStyle='#1a1a1a'; gg.textAlign='center'; gg.font=`700 34px ${FONT}`; gg.save(); gg.translate(128,128); ['E','M','E','R','G','E','N','C','Y'].forEach((ch,i)=>{ gg.save(); gg.rotate(-1.15+i*.29); gg.fillText(ch,0,-92); gg.restore(); }); ['S','T','O','P'].forEach((ch,i)=>{ gg.save(); gg.rotate(PI+.45-i*.3); gg.fillText(ch,0,-92); gg.restore(); }); gg.restore(); });
+    const disk=add(g,new T.CircleGeometry(.045,32),new T.MeshStandardMaterial({map:ring,roughness:.6}),0,0,.0015);
+    add(g,Cz(.016,.028,16),MAT.chrome,0,0,.014); c.cap=add(g,new T.SphereGeometry(.032,24,12,0,PI*2,0,PI/2).rotateX(PI/2),mat(0xc22a1e,.4,.15),0,0,.026); c.cap.scale.z=.55; c.rest=.026; }
+  else { bt.bezel.push([u,v,.006]); }
+  if(k==='push'||k==='taped'){ c.cap=add(g,Cz(.0135,.009,20),capMats[d.color||'black'],0,0,.014); c.rest=.014; }
+  if(k==='illum'){ c.lens=add(g,new T.CylinderGeometry(.0128,.0145,.022,20).rotateX(PI/2),new T.MeshStandardMaterial({color:LENS[d.color],emissive:LENS[d.color],emissiveIntensity:.05,roughness:.25,transparent:true,opacity:.93}),0,0,.022); c.cap=c.lens; c.rest=.022; }
+  if(k==='mush'){ add(g,Cz(.012,.02,14),MAT.chrome,0,0,.014); c.cap=add(g,new T.SphereGeometry(.03,22,12,0,PI*2,0,PI/2).rotateX(PI/2),capMats.black,0,0,.022); c.cap.scale.z=.7; c.rest=.022; }
+  if(k==='sel'){ add(g,Cz(.015,.012,18),MAT.black,0,0,.014); c.knob=new T.Group(); c.knob.position.z=.02; g.add(c.knob); add(c.knob,B(.009,.034,.016),MAT.black,0,0,.006); add(c.knob,B(.0025,.03,.002),MAT.white,0,.001,.0145); }
+  if(k==='key'){ add(g,Cz(.013,.03,18),MAT.chrome,0,0,.02); c.knob=new T.Group(); c.knob.position.z=.036; g.add(c.knob); add(c.knob,B(.003,.014,.002),MAT.dark,0,0,0); }
+  const hit=add(g,new T.CircleGeometry(.036,16),hitMat,0,.008,.035); hit.visible=false; hit.userData.target={type:'ctrl',c}; pickables.push(hit);
+  ctrls.push(c); return c;
+}
+function tape(panel,u,v,w,h,color=0x2f6fd0,rot=0){ const tt=canvasTex(128,64,(g,W,H)=>{ g.fillStyle=color===0xcfcac0?'#cfcac0':'#2f6fd0'; g.fillRect(0,0,W,H); speckle(g,W,H,200,120,80,.2); g.fillStyle='rgba(255,255,255,.15)'; g.fillRect(0,H*.2,W,3); });
+  const m=add(panel,new T.PlaneGeometry(w,h),new T.MeshStandardMaterial({map:tt,roughness:.9}),u,v,.024); m.rotation.z=rot; return m; }
+const notMod = 'Not part of this simulator. It covers the No. 1 payoff only.';
+const taped = 'This button is taped out on the real panel and is not in service.';
+function cos(label,kind='push',color,extra={}){ return Object.assign({label,kind,color,down:()=>say(extra.note||notMod,'info'),cos:true},extra); }
+
+/* ---------- MAIN CONSOLE ---------- */
+const CONSOLE_POS=new T.Vector3(2.75,0,4.35);
+const consoleG=new T.Group(); consoleG.position.copy(CONSOLE_POS); consoleG.rotation.y=Math.atan2(CONSOLE_POS.x,CONSOLE_POS.z); scene.add(consoleG);
+add(consoleG,B(1.95,.9,.86),MAT.console,0,.45,-.02);
+add(consoleG,B(1.8,.12,.7),mat(0x1c1d1d,.95,0),0,.06,.1);
+{ const sh=new T.Shape(); sh.moveTo(-.47,.88); sh.lineTo(-.47,.935); sh.lineTo(.46,1.14); sh.lineTo(.46,.88); sh.closePath(); const eg=new T.ExtrudeGeometry(sh,{depth:1.97,bevelEnabled:false}); eg.rotateY(PI/2); eg.translate(-.985,0,0); add(consoleG,eg,MAT.console); }
+add(consoleG,B(1.99,.035,.02),MAT.chrome,0,.918,.475);
+add(consoleG,new T.PlaneGeometry(1.2,.7).rotateX(-PI/2),mat(0x161616,.95,0),0,.004,.95);
+const TILT=Math.atan2(.205,.93), PANEL_L=Math.hypot(.93,.205);
+function mkPanel(x0,w){ const p=new T.Group(); p.position.set(x0,.937,.47); p.rotation.x=-(PI/2-TILT); consoleG.add(p); add(p,new T.PlaneGeometry(w,PANEL_L),MAT.console,w/2,PANEL_L/2,.001); add(p,B(w,.012,.012),MAT.dark,w/2,0,-.004); return p; }
+const PL=mkPanel(-.965,1.145), PR=mkPanel(.19,.77);
+add(consoleG,B(.008,.02,.95),MAT.dark,.185,1.04,0).rotation.x=TILT;
+
+// right panel: No. 1 payoff
+const cu=[.075,.16,.245,.33,.415,.50,.585,.67], rv=[.86,.76,.66,.53,.43,.33,.20];
+const R=(c,r,d)=>addCtrl(PR,cu[c],rv[r],d);
+const H=k=>({hold:k});
+addCtrl(PR,.095,.85,{kind:'estop',tip:'EMERGENCY STOP (press again to reset)',down:()=>toggleEstop()});
+add(PR,Cz(.06,.02,28),MAT.grey,.40,.84,.01); add(PR,Cz(.022,.04,16),MAT.rust,.40,.84,.03);
+R(4,0,{kind:'plug'}); R(5,0,{label:'',kind:'push',down:()=>say('Spare button. No function.','info')});
+R(6,0,Object.assign({label:'NO 1 COIL CAR\nRAISE',tip:'COIL CAR RAISE (hold)'},H('carUp'))); R(7,0,Object.assign({label:'NO 1 COIL CAR\nLOWER',tip:'COIL CAR LOWER (hold)'},H('carDn')));
+R(4,1,{label:'NO 1 LASER',kind:'illum',color:'yellow',lit:()=>S.laser,down:()=>{S.laser=!S.laser;}});
+R(5,1,{kind:'plug'});
+R(6,1,Object.assign({label:'NO 1 COIL CAR\nFWD',tip:'COIL CAR FWD, toward the arbor (hold)'},H('carFwd'))); R(7,1,Object.assign({label:'NO 1 COIL CAR\nREV',tip:'COIL CAR REV, away from the arbor (hold)'},H('carRev')));
+R(4,2,cos('NO 1 SCRAP CAR\nFWD')); R(5,2,cos('NO 1 SCRAP CAR\nREV'));
+R(6,2,cos('NO 1 TURNSTILE\nAUTO   MAN','sel')); R(7,2,cos('NO 1 TURNSTILE\nCW    CCW','sel'));
+for(let c=0;c<4;c++){ R(c,1,{kind:'plug'}); R(c,2,{kind:'plug'}); }
+{ const t=canvasTex(256,64,(g,w,h)=>{ g.fillStyle='#d8d2bc'; g.fillRect(0,0,w,h); g.fillStyle='#111'; g.textAlign='center'; fit(g,'NO 1 PINCH ROLL',w/2,46,w-20,40); }); add(PR,new T.PlaneGeometry(.14,.032),new T.MeshStandardMaterial({map:t}),.2875,.595,.0015);
+  const t2=canvasTex(256,64,(g,w,h)=>{ g.fillStyle='#d8d2bc'; g.fillRect(0,0,w,h); g.fillStyle='#111'; g.textAlign='center'; fit(g,'NO 1 PAYOFF',w/2,46,w-20,40); }); add(PR,new T.PlaneGeometry(.13,.032),new T.MeshStandardMaterial({map:t2}),.6275,.595,.0015); }
+R(0,3,{label:'NO 1 PEELER DRV\nFWD',kind:'taped',down:()=>say(taped,'info')}); R(1,3,{label:'NO 1 PEELER DRV\nREV',kind:'taped',down:()=>say(taped,'info')});
+R(2,3,Object.assign({label:'NO 1 PINCH ROLL DRV\nFWD',tip:'PINCH ROLL DRIVE FWD (hold)'},H('pinchF'))); R(3,3,Object.assign({label:'NO 1 PINCH ROLL DRV\nREV',tip:'PINCH ROLL DRIVE REV (hold)'},H('pinchR')));
+R(4,3,{label:'NO 1 H-DWN ROLL DRV\nFWD',kind:'taped',down:()=>say(taped,'info')}); R(5,3,{label:'NO 1 H-DWN ROLL DRV\nREV',kind:'taped',down:()=>say(taped,'info')});
+R(6,3,Object.assign({label:'NO 1 PAYOFF JOG\nFWD',tip:'PAYOFF JOG FWD, unwinds toward the pinch roll (hold)'},H('jogF'))); R(7,3,Object.assign({label:'NO 1 PAYOFF JOG\nREV',tip:'PAYOFF JOG REV (hold)'},H('jogR')));
+tape(PR,.1175,.535,.17,.036,0x2f6fd0,.03); tape(PR,.4575,.53,.17,.036,0x2f6fd0,-.02);
+R(0,4,Object.assign({label:'NO 1 PEELER\nRAISE'},H('peelUp'))); R(1,4,Object.assign({label:'NO 1 PEELER\nLOWER'},H('peelDn')));
+R(2,4,{label:'NO 1 PINCH ROLL\nOPEN',kind:'illum',color:'green',lit:()=>!S.pinchClosed,down:()=>{ if(hydOK()) S.pinchClosed=false; }});
+R(3,4,{label:'NO 1 PINCH ROLL\nCLOSE',kind:'illum',color:'red',lit:()=>S.pinchClosed,down:()=>{ if(hydOK()) S.pinchClosed=true; }});
+R(4,4,Object.assign({label:'NO 1 H-DWN ROLL\nRAISE'},H('hdUp'))); R(5,4,Object.assign({label:'NO 1 H-DWN ROLL\nLOWER'},H('hdDn')));
+R(6,4,Object.assign({label:'NO 1 PAYOFF ADJ\nIN',tip:'PAYOFF ADJ IN, shifts the arbor (hold)'},H('adjIn'))); R(7,4,Object.assign({label:'NO 1 PAYOFF ADJ\nOUT',tip:'PAYOFF ADJ OUT (hold)'},H('adjOut')));
+R(0,5,Object.assign({label:'NO 1 PEELER\nEXTEND'},H('peelExt'))); R(1,5,Object.assign({label:'NO 1 PEELER\nRETRACT'},H('peelRet')));
+R(2,5,Object.assign({label:'CARRIAGE\nRAISE',tip:'PEELER CARRIAGE RAISE (hold)'},H('carrUp'))); R(3,5,Object.assign({label:'CARRIAGE\nLOWER',tip:'PEELER CARRIAGE LOWER (hold)'},H('carrDn')));
+R(4,5,{kind:'plug'}); R(5,5,cos('NO 1 H-DWN ROLL\nAUTO   MAN','sel',null,{note:'Hold-down AUTO is not modeled. The roll runs in MAN.'}));
+R(6,5,Object.assign({label:'NO 1 PAYOFF ADJ\nCENTER',tip:'PAYOFF ADJ CENTER, returns the arbor to centre (hold)'},H('adjC')));
+R(7,5,{label:'NO 1 PAYOFF\nEXP     COL',kind:'sel',tip:'MANDREL EXPAND / COLLAPSE',get:()=>S.mandrelTarget==='COL'?1:0,set:i=>setMandrel(i?'COL':'EXP')});
+for(const c of [0,1,2,4,5,7]) R(c,6,{kind:'plug'});
+R(3,6,{label:'NO 1 SHEAR',kind:'mush',tip:'NO 1 SHEAR (crop)',down:()=>fireShear()});
+R(6,6,{label:'KEY',kind:'key',down:()=>say('Maintenance key switch. Not used in this sim.','info')});
+
+// left panel: line controls, HMI, No. 2 (cosmetic)
+const L=(u,v,d)=>addCtrl(PL,u,v,d);
+L(.07,.86,{kind:'estop',tip:'EMERGENCY STOP (press again to reset)',down:()=>toggleEstop()});
+add(PL,B(.36,.28,.02),mat(0x8d9192,.5,.4),.30,.77,.01); add(PL,B(.335,.255,.006),MAT.black,.30,.77,.021);
+const hmiTex=canvasTex(512,384,drawHMI); const hmiMesh=add(PL,new T.PlaneGeometry(.31,.232),new T.MeshBasicMaterial({map:hmiTex}),.30,.77,.025);
+const plateTex=canvasTex(512,320,(g,w,h)=>{ g.fillStyle='#7c7e7a'; g.fillRect(0,0,w,h); speckle(g,w,h,1500,80,60,.3); g.fillStyle='#1c1c1c'; g.font=`40px ${MARKER}`; g.save(); g.rotate(-.04); g.fillText('Normal test shot-',30,90); g.fillText('80 L/F - 100 L/F',80,150); g.fillText('Long test shot',40,230); g.fillText('200 L/F',150,295); g.restore(); });
+add(PL,new T.PlaneGeometry(.22,.14),new T.MeshStandardMaterial({map:plateTex,roughness:.8}),.60,.84,.004);
+const counterTex=canvasTex(256,96,(g,w,h)=>{ g.fillStyle='#262b2e'; g.fillRect(0,0,w,h); g.fillStyle='#120807'; g.fillRect(16,10,w-32,46); g.fillStyle='#ff3a24'; g.font=`700 40px "Courier New",monospace`; g.textAlign='right'; g.fillText(S.jogging?'46':'0',w-28,48); for(let i=0;i<6;i++){ g.fillStyle='#c0392b'; g.fillRect(36+i*32,68,18,12);} });
+add(PL,new T.PlaneGeometry(.13,.05),new T.MeshBasicMaterial({map:counterTex}),.85,.865,.004);
+const notesTex=canvasTex(512,256,(g,w,h)=>{ g.fillStyle='#151515'; g.font=`32px ${MARKER}`; g.save(); g.rotate(-.05); g.fillText('300 L/F End of Leveler',10,52); g.fillText('200 L/F Entry of leveler',4,100); g.restore(); g.font=`36px ${MARKER}`; g.fillText('Jog',300,180); g.fillText('108 fpm',360,140); g.fillText('90',400,185); g.fillText('46',400,230); });
+add(PL,new T.PlaneGeometry(.32,.16),new T.MeshBasicMaterial({map:notesTex,transparent:true,depthWrite:false}),.95,.84,.003);
+// lower-left: line + hydraulics
+const lc=[.05,.13,.21,.29], lr=[.48,.38,.28,.18];
+L(lc[0],lr[0],cos('ENTRY SECTION\nPOS JOG')); L(lc[1],lr[0],{label:'LINE\nRESET',kind:'illum',color:'white',lit:()=>false,down:()=>{ msg={text:'',level:'info',t:-1e9}; msgEl.textContent=''; }});
+L(lc[2],lr[0],cos('LEVELER\nBYPASS','sel')); L(lc[3],lr[0],cos('FANS\nOFF','push','red'));
+L(lc[0],lr[1],{label:'LINE\nRUN',kind:'illum',color:'blue',lit:()=>S.lineRun,down:()=>{ if(S.estop) return say('E-STOP is active.'); if(!S.hydA) return say('Start HYD A before LINE RUN.'); S.lineRun=true; }});
+L(lc[1],lr[1],{label:'LINE\nSTOP',color:'red',down:()=>{S.lineRun=false;}});
+L(lc[2],lr[1],{kind:'plug'});
+L(lc[3],lr[1],{label:'AIR\nON',kind:'illum',color:'green',lit:()=>S.air,down:()=>{S.air=!S.air;}});
+L(lc[0],lr[2],cos('ENTRY SECTION\nRUN','sel'));
+L(lc[1],lr[2],{kind:'plug'});
+L(lc[2],lr[2],{label:'HYD A\nON',kind:'illum',color:'green',lit:()=>S.hydA,tip:'HYD A ON, starts hydraulic pump A',down:()=>{ if(S.estop) return say('E-STOP is active. Reset it before starting hydraulics.'); if(!S.hydA){S.hydA=true; tone(90,.6,'sawtooth',.03);} }});
+L(lc[3],lr[2],{label:'HYD A\nOFF',color:'red',down:()=>{S.hydA=false; S.lineRun=false;}});
+L(lc[0],lr[3],{label:'ENTRY\nSTOP',color:'red',down:()=>{S.lineRun=false;}});
+L(lc[1],lr[3],{label:'2   ARBOR   1',kind:'sel',tip:'ARBOR SELECT (2 / 1)',get:()=>S.arborSel===1?1:0,set:i=>{S.arborSel=i?1:2;}});
+L(lc[2],lr[3],{label:'HYD B\nON',kind:'illum',color:'green',lit:()=>S.hydB,down:()=>{ if(!S.estop) S.hydB=true; }});
+L(lc[3],lr[3],{label:'HYD B\nOFF',color:'red',down:()=>{S.hydB=false;}});
+// middle (taped out pinch rolls)
+L(.42,.52,cos('NO 3 PINCH ROLL\nFWD')); L(.50,.52,cos('NO 3 PINCH ROLL\nREV'));
+L(.42,.42,cos('NO 3 PINCH\nROLL OPEN','illum','green',{lit:()=>true})); L(.50,.42,cos('NO 3 PINCH\nROLL CLOSE','illum','red',{lit:()=>false}));
+for(const u of [.37,.43,.49,.55]){ L(u,.27,{kind:'plug'}); L(u,.15,{kind:'plug'}); }
+tape(PL,.46,.30,.22,.05,0x2f6fd0,.02); tape(PL,.46,.21,.24,.045,0x2f6fd0,-.01); tape(PL,.46,.12,.24,.05,0xcfcac0,.01);
+// upper middle
+const um=[[.50,.74,'CREEP ACCUM\nFWD'],[.58,.74,'CREEP ACCUM\nREV'],[.50,.66,'T-OUT BRIDLE\nFWD'],[.58,.66,'T-OUT BRIDLE\nREV'],[.50,.58,'T-OUT BRIDLE\nJOG FWD'],[.58,.58,'T-OUT BRIDLE\nJOG REV']];
+um.forEach(([u,v,l])=>L(u,v,cos(l)));
+L(.66,.74,{kind:'plug'}); L(.66,.66,{kind:'plug'}); L(.66,.58,cos('UP    DWN','sel'));
+L(.74,.74,cos('TABLE\nUP','illum','blue',{lit:()=>S.lineRun})); L(.82,.74,cos('TABLE\nPINCH ROLL','illum','green',{lit:()=>S.air}));
+L(.74,.66,cos('','illum','blue',{lit:()=>false})); tape(PL,.82,.665,.08,.045);
+L(.74,.58,cos('BURRMASHER\nOFF   ON','sel')); L(.82,.58,cos('ENTRY GUIDE\nAUTO   MAN','sel'));
+// No. 2 payoff group (cosmetic)
+const n2=[[.94,.74,'NO 2 COIL CAR\nRAISE'],[1.02,.74,'NO 2 COIL CAR\nLOWER'],[1.02,.66,'NO 2 COIL CAR\nFWD'],[1.10,.66,'NO 2 COIL CAR\nREV'],[.94,.58,'NO 2 SCRAP CAR\nFWD'],
+  [.62,.48,'NO 2 PINCH ROLL DRV\nFWD'],[.70,.48,'NO 2 PINCH ROLL DRV\nREV'],[.62,.38,'NO 2 PEELER\nRAISE'],[.70,.38,'NO 2 PEELER\nLOWER'],[.62,.28,'NO 2 PEELER\nEXTEND'],[.70,.28,'NO 2 PEELER\nRETRACT'],
+  [.78,.28,'NO 2 SHEAR TABLE\nRAISE'],[.86,.28,'NO 2 SHEAR TABLE\nLOWER'],[.94,.48,'NO 2 PAYOFF JOG\nFWD'],[1.02,.48,'NO 2 PAYOFF JOG\nREV'],[.94,.38,'NO 2 H-DWN ROLL\nRAISE'],[1.02,.38,'NO 2 H-DWN ROLL\nLOWER'],
+  [1.10,.38,'NO 2 PAYOFF ADJ\nIN'],[1.02,.28,'NO 2 PAYOFF ADJ\nCENTER']];
+n2.forEach(([u,v,l])=>L(u,v,cos(l)));
+L(1.10,.74,{kind:'plug'}); L(.94,.66,cos('NO 2 LASER','illum','yellow',{lit:()=>false}));
+L(1.02,.58,cos('NO 2 TURNSTILE\nAUTO   MAN','sel')); L(1.10,.58,cos('NO 2 TURNSTILE\nCW    CCW','sel'));
+L(.78,.38,cos('NO 2 PINCH\nROLL OPEN','illum','green',{lit:()=>false})); L(.86,.38,cos('NO 2 PINCH\nROLL CLOSE','illum','red',{lit:()=>true}));
+L(.78,.48,{kind:'plug'}); L(.86,.48,{kind:'plug'}); tape(PL,.82,.488,.15,.04,0x2f6fd0,.04); tape(PL,.66,.488,.15,.04);
+L(.94,.28,cos('NO 2 H-DWN ROLL\nAUTO   MAN','sel')); L(1.10,.28,cos('NO 2 PAYOFF\nEXP     COL','sel'));
+L(.62,.15,cos('CROP SHEAR','mush')); L(.70,.15,cos('DWN    UP\nOVERRIDE','sel')); L(.78,.15,cos('','illum','green',{lit:()=>false})); L(.86,.15,cos('SHEAR MODE\nSCRAP  MAN','sel'));
+L(.94,.15,{kind:'plug'}); L(1.02,.15,{kind:'plug'}); L(1.10,.15,cos('NO 2 SHEAR','mush'));
+// rag + screws
+{ const rg=new T.PlaneGeometry(.24,.19,10,10); const p=rg.attributes.position; for(let i=0;i<p.count;i++) p.setZ(i,Math.random()*.022+Math.sin(p.getX(i)*40)*.006); rg.computeVertexNormals(); add(PR,rg,mat(0xe9e3da,.95,0,{side:T.DoubleSide}),.62,.86,.012).rotation.z=.4; }
+for(const [p,u,v] of [[PL,.18,.04],[PL,.46,.04],[PL,1.0,.04],[PR,.05,.04],[PR,.72,.04]]) add(p,Cz(.012,.006,12),MAT.chrome,u,v,.003);
+// stack light
+const stack=new T.Group(); stack.position.set(-.38,1.14,-.42); consoleG.add(stack);
+add(stack,Cy(.065,.3,24),MAT.white,0,.15,0);
+const stackCol=[0xff2a1f,0xf6a21a,0x2bd457,0x2f73ff]; const stackSeg=[];
+['red','amber','green','blue'].forEach((n,i)=>{ const m=add(stack,Cy(.058,.095,24),new T.MeshStandardMaterial({color:stackCol[i],emissive:stackCol[i],emissiveIntensity:.05,transparent:true,opacity:.92,roughness:.3}),0,.66-i*.1,0); stackSeg.push(m); });
+add(stack,Cy(.06,.02,24),MAT.white,0,.72,0);
+
+/* ---------- local stations ---------- */
+const lst=new T.Group(); lst.position.set(1.06,1.25,3.25); lst.rotation.y=PI/2; stand.add(lst);
+add(lst,B(.13,.4,.08),mat(0x9a9e9f,.5,.5),0,0,-.04);
+{ const t=canvasTex(256,64,(g,w,h)=>{ g.fillStyle='#e9e6dc'; g.fillRect(0,0,w,h); g.fillStyle='#111'; g.textAlign='center'; fit(g,'PAYOFF 1',w/2,46,w-20,44); }); add(lst,new T.PlaneGeometry(.09,.024),new T.MeshStandardMaterial({map:t}),0,.18,.001); }
+addCtrl(lst,0,.12,Object.assign({label:'NO 1 PAYOFF\nJOG FWD',tip:'PAYOFF JOG FWD (hold)'},H('jogF')));
+addCtrl(lst,0,.035,Object.assign({label:'NO 1 PAYOFF\nJOG REV',tip:'PAYOFF JOG REV (hold)'},H('jogR')));
+addCtrl(lst,0,-.05,{label:'PINCH ROLL\nOPEN   CLOSE',kind:'sel',tip:'PINCH ROLL OPEN / CLOSE',get:()=>S.pinchClosed?1:0,set:i=>{ if(hydOK()) S.pinchClosed=!!i; }});
+addCtrl(lst,0,-.135,{kind:'plug'});
+// coil car pendant
+const pend=new T.Group(); pend.position.set(.9,1.32,.69); car.add(pend);
+add(pend,B(.1,.32,.07),mat(0x9a9e9f,.5,.5),0,0,-.035);
+addCtrl(pend,0,.11,Object.assign({label:'FWD',tip:'COIL CAR FWD (hold)'},H('carFwd')));
+addCtrl(pend,0,.035,Object.assign({label:'REV',color:'red',tip:'COIL CAR REV (hold)'},H('carRev')));
+addCtrl(pend,0,-.04,Object.assign({label:'RAISE',tip:'COIL CAR RAISE (hold)'},H('carUp')));
+addCtrl(pend,0,-.115,Object.assign({label:'LOWER',color:'red',tip:'COIL CAR LOWER (hold)'},H('carDn')));
+
+finalizeBatches();
+/* ---------- training board ---------- */
+const STEPS=[
+ ['Press HYD A ON (left panel, lower left).',()=>S.hydA],
+ ['Turn the 2 ARBOR 1 selector to 1.',()=>S.arborSel===1],
+ ['Turn NO 1 PAYOFF EXP/COL to COL to collapse the mandrel.',()=>S.mandrelExp<=.001||S.coilOnMandrel],
+ ['Press NO 1 LASER to show the mandrel centre line.',()=>S.laser],
+ ['Hold NO 1 COIL CAR RAISE until the coil is on mandrel centre line.',()=>S.carLift>=.999||S.coilOnMandrel],
+ ['Hold NO 1 COIL CAR FWD until the car stops at the arbor.',()=>carSupporting()||S.coilOnMandrel],
+ ['Turn EXP/COL to EXP so the mandrel grips the coil.',()=>S.coilOnMandrel],
+ ['Hold COIL CAR LOWER, then COIL CAR REV to back the car out.',()=>S.coilOnMandrel&&S.carX>3&&S.carLift<.05],
+ ['Hold NO 1 H-DWN ROLL LOWER until the roll rests on the coil.',()=>S.hd>=.999&&S.coilOnMandrel],
+ ['Hold NO 1 PEELER RAISE and PEELER EXTEND to reach the coil.',()=>S.peelUp>=.999&&S.peelExt>=.999],
+ ['Hold NO 1 PAYOFF JOG FWD to feed the head into the pinch roll.',()=>S.thread>=1],
+ ['Press NO 1 PINCH ROLL CLOSE.',()=>S.pinchClosed&&S.thread>=1],
+ ['Hold NO 1 PINCH ROLL DRV FWD to run the head past the shear.',()=>S.feed*FEED_LEN>SHEAR_D+.15||S.cropped],
+ ['Press NO 1 SHEAR to crop the head.',()=>S.cropped],
+];
+let done=STEPS.map(()=>false), startT=performance.now(), finishT=0;
+const boardTex=canvasTex(1024,1024,drawBoard);
+const board=new T.Group(); consoleG.add(board); board.position.set(-1.6,1.55,.25); board.rotation.y=.95;
+add(board,B(1.06,1.06,.03),MAT.dark,0,0,-.02); add(board,new T.PlaneGeometry(1.0,1.0),new T.MeshBasicMaterial({map:boardTex}),0,0,.0);
+add(board,Cy(.025,1.0),MAT.dark,0,-1.02,-.04); add(board,B(.5,.03,.4),MAT.dark,0,-1.53,-.04);
+const resetTex=canvasTex(512,128,(g,w,h)=>{ g.fillStyle='#4aa39b'; g.fillRect(0,0,w,h); g.fillStyle='#0d1514'; g.textAlign='center'; fit(g,'RESET SCENARIO',w/2,84,w-40,64); });
+const resetBtn=add(board,B(.36,.09,.03),new T.MeshStandardMaterial({map:resetTex,roughness:.5}),0,-.6,0);
+resetBtn.userData.target={type:'reset',tip:'RESET SCENARIO'}; pickables.push(resetBtn);
+function drawBoard(g,w,h){
+  g.fillStyle='#1b2427'; g.fillRect(0,0,w,h);
+  g.fillStyle='#4aa39b'; g.fillRect(0,0,w,12);
+  g.fillStyle='#e8ebe4'; g.textAlign='left'; g.font=`700 58px ${FONT}`; g.fillText('NO. 1 PAYOFF · LOAD AND THREAD',40,86);
+  const n=done.filter(Boolean).length; g.font=`600 30px ${FONT}`; g.fillStyle='#9fa9a4';
+  const el=((finishT||performance.now())-startT)/1000; g.fillText(`${n} of ${STEPS.length} steps   ·   ${Math.floor(el/60)}:${String(Math.floor(el%60)).padStart(2,'0')}`,40,128);
+  const cur=done.indexOf(false);
+  STEPS.forEach((s,i)=>{ const y=180+i*52; const isCur=i===cur, ok=done[i];
+    if(isCur){ g.fillStyle='rgba(240,182,52,.16)'; g.fillRect(24,y-36,w-48,50); g.fillStyle='#f0b634'; g.fillRect(24,y-36,6,50); }
+    g.fillStyle= ok?'#4aa39b': isCur?'#f0b634':'#59666a'; g.font=`700 30px ${FONT}`; g.fillText(ok?'✓':String(i+1).padStart(2,'0'),46,y);
+    g.fillStyle= ok?'#7f8b87': isCur?'#fdf3dc':'#c3cac6'; fit(g,s[0],100,y,w-140,isCur?33:30,isCur?'700':'500'); });
+  const now=performance.now(); const live = msg.text && now-msg.t<9000;
+  g.fillStyle= live? (msg.level==='alarm'?'#3a2412':'#13302d') : '#151c1e'; g.fillRect(24,930,w-48,70);
+  g.fillStyle= live? (msg.level==='alarm'?'#f0b634':'#7fd1c8') : '#59666a'; g.font=`600 30px ${FONT}`;
+  fit(g, live? msg.text : (cur<0? 'Coil threaded and cropped. Line is ready for the head.' : 'Point the controller at a button and pull the trigger. Hold for jog moves.'),44,975,w-88,30,'600');
+}
+function drawHMI(g,w,h){
+  g.fillStyle='#eef1ee'; g.fillRect(0,0,w,h);
+  const tiles=[['PAYOFF 1',S.coilOnMandrel?'#7ed957':'#bfc7c2'],['ARBOR '+S.arborSel,S.arborSel===1?'#7ed957':'#f0b634'],['HYD A',S.hydA?'#7ed957':'#e0533f'],['LINE',S.lineRun?'#5aa0ff':'#bfc7c2'],['E-STOP',S.estop?'#e0533f':'#7ed957']];
+  tiles.forEach(([t,c],i)=>{ g.fillStyle=c; g.fillRect(8+i*101,8,94,40); g.fillStyle='#111'; g.textAlign='center'; fit(g,t,55+i*101,36,86,22); });
+  g.textAlign='left'; g.fillStyle='#222'; g.font=`600 19px ${FONT}`;
+  const inch=m=>(m/.0254).toFixed(1);
+  const rows=[['MANDREL', S.mandrelExp>=.999?'EXPANDED':S.mandrelExp<=.001?'COLLAPSED':(S.mandrelTarget==='EXP'?'EXPANDING':'COLLAPSING')],
+    ['COIL CAR TO STOP', inch(Math.max(0,S.carX-carStop()))+' in'],['CAR LIFT',inch(S.carLift*.24)+' in  '+(S.carLift>=.999?'(MANDREL CL)':'')],
+    ['COIL', S.coilOnMandrel?'ON MANDREL':S.coilOnCar?'ON CAR  18,450 LB':'—'],
+    ['HOLD-DOWN', S.hd>=.999?'DOWN':S.hd<=.001?'UP':Math.round(S.hd*100)+'%'],['PEELER', `RAISE ${Math.round(S.peelUp*100)}%  EXT ${Math.round(S.peelExt*100)}%`],
+    ['PINCH ROLL', S.pinchClosed?'CLOSED':'OPEN'],['HEAD', S.cropped?'CROPPED':S.feed>0?`PAST NIP ${inch(S.feed*FEED_LEN)} in`:S.thread>0?`THREADING ${Math.round(S.thread*100)}%`:'ON COIL'],
+    ['ARBOR ADJ', (S.adj>=0?'+':'')+inch(S.adj)+' in']];
+  rows.forEach(([k,v],i)=>{ g.fillStyle='#5b6461'; g.fillText(k,14,82+i*25); g.fillStyle='#111'; g.fillText(v,170,82+i*25); });
+  // mini schematic
+  const ox=360, oy=78; g.strokeStyle='#888'; g.lineWidth=2; g.strokeRect(ox,oy,140,200);
+  g.fillStyle='#4aa39b'; g.fillRect(ox+10,oy+20,30,60); g.fillStyle='#555'; g.fillRect(ox+40,oy+46,40,8);
+  const px=ox+50+Math.min(1,(S.carX-carStop())/(CAR_HOME-carStop()))*70; g.fillStyle='#3f948e'; g.fillRect(px-12,oy+150,30,14);
+  const cy= S.coilOnMandrel? oy+50 : oy+150-12-20*(1-S.carLift)*.0-20; const cx= S.coilOnMandrel? ox+60 : px;
+  g.strokeStyle='#999'; g.lineWidth=5; g.beginPath(); g.arc(cx,S.coilOnMandrel?oy+50:oy+125-S.carLift*8,20,0,7); g.stroke();
+  g.fillStyle='#111'; g.font=`600 14px ${FONT}`; g.fillText('PAYOFF',ox+8,oy+96); g.fillText('COIL CAR',ox+70,oy+190);
+  // alarm bar
+  const now=performance.now(), live=msg.text&&msg.level==='alarm'&&now-msg.t<8000;
+  g.fillStyle= live?'#e0533f':'#cfd6d2'; g.fillRect(0,h-50,w,50); g.fillStyle= live?'#fff':'#5b6461'; g.font=`700 20px ${FONT}`;
+  fit(g, live? msg.text : 'NO ACTIVE ALARMS', 12, h-18, w-24, 20);
+}
+
+/* ---------- teleport pads ---------- */
+const padTex=canvasTex(256,64,(g,w,h)=>{});
+const PADS={};
+function pad(name,label,x,z,lx,ly,lz){
+  const p={name,pos:new T.Vector3(x,0,z),look:new T.Vector3(lx,ly,lz)};
+  const ring=add(scene,new T.RingGeometry(.26,.34,40).rotateX(-PI/2),new T.MeshBasicMaterial({color:0x4aa39b,transparent:true,opacity:.75}),x,.01,z);
+  const disc=add(scene,new T.CircleGeometry(.34,32).rotateX(-PI/2),new T.MeshBasicMaterial({color:0x4aa39b,transparent:true,opacity:.12}),x,.011,z);
+  const t=canvasTex(256,64,(g,w,h)=>{ g.fillStyle='rgba(20,30,32,.85)'; g.fillRect(0,0,w,h); g.fillStyle='#bfe6e1'; g.textAlign='center'; fit(g,label,w/2,46,w-16,40); });
+  const sp=new T.Sprite(new T.SpriteMaterial({map:t,transparent:true})); sp.scale.set(.5,.125,1); sp.position.set(x,.35,z); scene.add(sp);
+  for(const o of [ring,disc,sp]){ o.userData.target={type:'pad',p,tip:'Go to: '+label}; pickables.push(o); }
+  PADS[name]=p; return p; }
+const consoleStand=new T.Vector3(0,0,.95).applyMatrix4(consoleG.matrixWorld.compose(consoleG.position,new T.Quaternion().setFromEuler(consoleG.rotation),new T.Vector3(1,1,1)));
+pad('console','CONSOLE',consoleStand.x,consoleStand.z, CONSOLE_POS.x-.1,1.0,CONSOLE_POS.z-.2);
+pad('arbor','ARBOR',1.9,-1.9, 0,1.3,0);
+pad('pinch','PINCH ROLL',1.8,3.4, 0,1.3,2.0);
+pad('car','COIL CAR',5.6,1.9, 4.5,1.0,0);
+
+/* ---------- actions ---------- */
+function toggleEstop(){ if(!S.estop){ S.estop=true; S.hydA=false; S.hydB=false; S.lineRun=false; for(const k in holdCount) holdCount[k]=0; say('E-STOP pressed. All motion stopped.'); tone(300,.4,'sawtooth',.06); }
+  else { S.estop=false; say('E-STOP reset. Restart HYD A to continue.','info'); } }
+function setMandrel(t){ if(!hydOK()) return;
+  if(t==='COL' && S.coilOnMandrel && !carSupporting()) return say('Collapse blocked. The coil car is not supporting the coil.');
+  if(t==='EXP' && S.coilOnCar && S.carX<enterX()-.01 && !carSupporting()) return say('Coil is only partly on the mandrel. Run COIL CAR FWD to the stop before expanding.');
+  S.mandrelTarget=t; }
+function fireShear(){ if(!hydOK()) return; if(S.shearAnim>0) return; S.shearAnim=1; tone(140,.25,'square',.06);
+  const out=S.feed*FEED_LEN; if(out>SHEAR_D+.05){ const len=out-SHEAR_D; const m=add(scene,new T.BoxGeometry(1.18,.004,len),stripMat,stripB.position.x,NIP.y,NIP.z+SHEAR_D+len/2); m.userData.v=0; m.userData.spin=(Math.random()-.5)*2; scraps.push(m); if(scraps.length>6) scene.remove(scraps.shift()); S.feed=SHEAR_D/FEED_LEN; S.cropped=true; say('Head cropped.','info'); }
+  else if(S.thread>=1) say('Head has not reached the shear yet. Run PINCH ROLL DRV FWD first.','info'); }
+const ACT={
+  carFwd(dt){ if(!hydOK()) return; const tgt=carStop(), en=enterX(); if(S.carX<=tgt+1e-5) return;
+    const v=S.carX<en+.35?.10:.38; let nx=S.carX-v*dt, why=null;
+    if(nx<en){ if(S.coilOnCar){ if(S.carLift<.999) why='Coil is below mandrel centre line. Hold COIL CAR RAISE to the upper limit first.'; else if(S.mandrelExp>.001) why='Mandrel is expanded. Turn NO 1 PAYOFF to COL before loading.'; else if(S.hd>.15) why='Hold-down roll is in the coil path. Raise it first.'; else if(S.peelUp>.3&&S.peelExt>.3) why='Peeler is in the coil path. Retract it first.'; }
+      else if(S.coilOnMandrel && S.carLift>.35) why='The saddle would strike the coil. Lower the coil car first.'; }
+    if(why){ nx=Math.max(nx,en); if(S.carX-nx<1e-6){ say(why); return; } }
+    S.carX=Math.max(tgt,nx); S.moving=true; },
+  carRev(dt){ if(!hydOK()) return; if(S.coilOnMandrel && S.carLift>.35 && S.carX<enterX()) return say('Lower the coil car before backing out. The saddle is under the coil.');
+    if(S.coilOnCar && S.carX<enterX() && S.mandrelExp>.001) return say('Mandrel is gripping the coil. Collapse it first.');
+    const v=S.carX<enterX()+.35?.10:.38; if(S.carX<CAR_HOME){ S.carX=Math.min(CAR_HOME,S.carX+v*dt); S.moving=true; } },
+  carUp(dt){ if(!hydOK()) return; if(S.coilOnCar && S.carX<enterX()-.01) return say('Coil is partly on the mandrel. Do not move the lift now.');
+    if(S.coilOnMandrel && S.carX<enterX() && !(Math.abs(S.carX-carStop())<.004) && S.carLift>=.35) return say('Saddle is not centred under the coil. Run COIL CAR FWD to the stop first.');
+    if(S.carLift<1){ S.carLift=Math.min(1,S.carLift+.22*dt); S.moving=true; } },
+  carDn(dt){ if(!hydOK()) return; if(S.coilOnCar && S.carX<enterX()-.01) return say('Coil is partly on the mandrel. Do not move the lift now.'); if(S.carLift>0){ S.carLift=Math.max(0,S.carLift-.22*dt); S.moving=true; } },
+  hdDn(dt){ if(!hydOK()) return; if(S.hd<1){ S.hd=Math.min(1,S.hd+.3*dt); S.moving=true; } },
+  hdUp(dt){ if(!hydOK()) return; if(S.hd>0){ S.hd=Math.max(0,S.hd-.3*dt); S.moving=true; } },
+  peelUp(dt){ if(!hydOK()) return; if(S.peelUp<1){ S.peelUp=Math.min(1,S.peelUp+.35*dt); S.moving=true; } },
+  peelDn(dt){ if(!hydOK()) return; if(S.peelUp>0){ S.peelUp=Math.max(0,S.peelUp-.35*dt); S.moving=true; } },
+  peelExt(dt){ if(!hydOK()) return; if(S.coilOnCar && S.carX<enterX()+.3 && S.peelUp>.3) return say('Coil car is passing. Keep the peeler retracted.'); if(S.peelExt<1){ S.peelExt=Math.min(1,S.peelExt+.3*dt); S.moving=true; } },
+  peelRet(dt){ if(!hydOK()) return; if(S.peelExt>0){ S.peelExt=Math.max(0,S.peelExt-.3*dt); S.moving=true; } },
+  carrUp(dt){ if(!hydOK()) return; if(S.carriage<1){ S.carriage=Math.min(1,S.carriage+.3*dt); S.moving=true; } },
+  carrDn(dt){ if(!hydOK()) return; if(S.carriage>0){ S.carriage=Math.max(0,S.carriage-.3*dt); S.moving=true; } },
+  adjIn(dt){ adjMove(-1,dt); }, adjOut(dt){ adjMove(1,dt); },
+  adjC(dt){ if(Math.abs(S.adj)<1e-4) return; adjMove(-Math.sign(S.adj),dt,true); },
+  jogF(dt){ jog(1,dt); }, jogR(dt){ jog(-1,dt); },
+  pinchF(dt){ pinchDrive(1,dt); }, pinchR(dt){ pinchDrive(-1,dt); },
+};
+function adjMove(dir,dt,center){ if(!hydOK()) return; if((S.coilOnCar||S.carLift>.35) && S.carX<enterX()) return say('Coil car is at the arbor. Finish the transfer and back the car out first.');
+  let n=S.adj+dir*.03*dt; if(center && Math.sign(n)!==Math.sign(S.adj)) n=0; S.adj=Math.max(-.1,Math.min(.1,n)); S.moving=true; }
+function jog(dir,dt){ if(!hydOK()) return; if(S.arborSel!==1) return say('ARBOR selector is on 2. Turn it to 1 to run the No. 1 payoff.');
+  if(S.coilOnCar && S.carX<enterX()) return say('Coil is still on the coil car. Expand the mandrel and back the car out first.');
+  if(S.coilOnMandrel){ if(S.mandrelExp<.999) return say('Mandrel is not fully expanded. The coil would slip.');
+    if(S.carLift>.05 && S.carX<enterX()) return say('Coil car is still under the coil. Lower it and back it out.');
+    if(dir>0 && S.hd<.999 && S.thread<.01) return say('Lower the H-DWN ROLL onto the coil first so the wraps cannot spring loose.');
+    if(dir>0){ if(S.peelUp>=.999 && S.peelExt>=.999 && S.hd>=.999){ if(S.pinchClosed && S.thread>=.96 && S.thread<1) return say('Pinch roll is closed. Open it to let the head in.'); S.thread=Math.min(1,S.thread+.094*dt); if(S.thread>=1) say('Head is in the pinch roll nip. Close the pinch roll.','info'); }
+      else if(S.thread<1) say('The head is not being picked up. Raise and extend the PEELER to the coil.','info'); }
+    else if(S.feed<=0){ S.thread=Math.max(0,S.thread-.094*dt); } }
+  const w=.28*dir*dt; S.mAngle+=w; if(S.coilOnMandrel) S.coilAngle+=w; S.jogging=true; S.moving=true; }
+function pinchDrive(dir,dt){ if(!hydOK()) return; if(S.arborSel!==1) return say('ARBOR selector is on 2. Turn it to 1.');
+  if(!S.pinchClosed) return say('Close the PINCH ROLL first.'); if(S.thread<1) return say('There is no strip in the nip yet. Thread it with PAYOFF JOG FWD.');
+  const n=Math.max(0,Math.min(1,S.feed+.146*dir*dt)); if(n===S.feed) return; S.feed=n; const w=.28*dir*dt; S.mAngle+=w; S.coilAngle+=w; upRoll.rotation.x-=dir*dt*2.3; lowRoll.rotation.x+=dir*dt*2.3; S.jogging=true; S.moving=true;
+  if(S.feed>=1) say('Head is at the end of the table. Crop it with NO 1 SHEAR.','info'); }
+
+/* ---------- interaction ---------- */
+const hint=document.getElementById('hint');
+function tipFor(t){ if(!t) return ''; if(t.type==='ctrl'){ const d=t.c.d; return d.tip || ((d.label||'').replace(/\n/g,' ').replace(/\s+/g,' ').trim() + (d.hold?' (hold)':'')) || 'Plug'; } return t.tip||''; }
+function activate(t,src){ if(!t) return null; if(t.type==='reset'){ resetScenario(); tone(880,.08); return null; }
+  if(t.type==='pad'){ goTo(t.p); return null; }
+  const c=t.c, d=c.d; c.down++; tone(d.kind==='sel'?1200:1600,.03,'square',.03); haptic(src,.5,30);
+  if(d.kind==='sel'){ if(d.get){ d.set(1-d.get()); } else { c.val=1-c.val; if(d.down) d.down(); } }
+  else { if(d.down) d.down(); if(d.hold) holdCount[d.hold]=(holdCount[d.hold]||0)+1; }
+  return c; }
+function release(c){ if(!c) return; c.down=Math.max(0,c.down-1); if(c.d.hold) holdCount[c.d.hold]=Math.max(0,(holdCount[c.d.hold]||0)-1); }
+function resetScenario(){ S=fresh(); for(const k in holdCount) holdCount[k]=0; done=STEPS.map(()=>false); startT=performance.now(); finishT=0; scraps.forEach(s=>scene.remove(s)); scraps.length=0; msg={text:'',level:'info',t:-1e9}; msgEl.textContent=''; redraw(scaleTex); }
+
+// desktop / touch
+const ray=new T.Raycaster(), ndc=new T.Vector2(); let mouseHeld=null, controls;
+const hoverRing=add(scene,new T.RingGeometry(.03,.038,28),new T.MeshBasicMaterial({color:0xf0b634,transparent:true,opacity:.95,depthTest:false}),0,-10,0); hoverRing.renderOrder=10;
+function pick(origin,dir){ ray.set(origin,dir); ray.camera=camera; ray.far=20; const h=ray.intersectObjects(pickables,false); return h[0]||null; }
+function setNdc(e){ const r=canvas.getBoundingClientRect(); ndc.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1); }
+function mouseHit(e){ setNdc(e); ray.setFromCamera(ndc,camera); const h=ray.intersectObjects(pickables,false); return h[0]||null; }
+canvas.addEventListener('pointerdown',e=>{ const h=mouseHit(e); if(h){ if(controls) controls.enabled=false; mouseHeld=activate(h.object.userData.target,null)||'none'; try{canvas.setPointerCapture(e.pointerId);}catch(_){} } });
+const endMouse=()=>{ if(mouseHeld){ if(mouseHeld!=='none') release(mouseHeld); mouseHeld=null; if(controls) controls.enabled=true; } };
+canvas.addEventListener('pointerup',endMouse); canvas.addEventListener('pointercancel',endMouse);
+let lastHover=null;
+canvas.addEventListener('pointermove',e=>{ if(renderer.xr.isPresenting) return; const h=mouseHit(e); const t=h?h.object.userData.target:null; showHover(hoverRing,h,t); canvas.style.cursor=t?'pointer':'grab'; if(t!==lastHover){ lastHover=t; hint.textContent = t? tipFor(t) : 'Drag to look around. Click a panel button to press it, and hold it for jog and travel moves.'; } });
+function showHover(ring,h,t){ if(h&&t&&t.type==='ctrl'){ t.c.g.getWorldPosition(ring.position); t.c.g.getWorldQuaternion(ring.quaternion); ring.translateZ(.03); ring.visible=true; } else ring.visible=false; }
+controls=new T.OrbitControls(camera,canvas); controls.enableDamping=true; controls.dampingFactor=.12; controls.minDistance=.25; controls.maxDistance=14; controls.maxPolarAngle=PI*.495; controls.rotateSpeed=.6;
+function setView(name){ const p=PADS[name]; const eye=p.pos.clone(); eye.y=1.65; const dir=p.look.clone().sub(eye); const tgt=eye.clone().addScaledVector(dir.normalize(),.6);
+  if(name==='console'){ const panel=new T.Vector3(); PR.getWorldPosition(panel); tgt.copy(panel).lerp(CONSOLE_POS.clone().setY(1.0),.5); eye.copy(tgt).add(new T.Vector3(Math.sin(consoleG.rotation.y)*.75,.55,Math.cos(consoleG.rotation.y)*.75)); }
+  camera.position.copy(eye); controls.target.copy(tgt); controls.update(); }
+document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));
+
+// XR controllers
+const handState=[];
+function haptic(src,i,ms){ try{ const a=src&&src.userData.inputSource&&src.userData.inputSource.gamepad&&src.userData.inputSource.gamepad.hapticActuators; if(a&&a[0]) a[0].pulse(i,ms);}catch(e){} }
+function hapticAll(i,ms){ handState.forEach(h=>haptic(h.ctrl,i,ms)); }
+const tip=new T.Sprite(new T.SpriteMaterial({map:canvasTex(512,96,()=>{}),transparent:true,depthTest:false})); tip.renderOrder=11; tip.scale.set(.36,.0675,1); tip.visible=false; scene.add(tip); let tipText='';
+function setTip(text){ if(text===tipText) return; tipText=text; const t=tip.material.map; t.userData.fn=(g,w,h)=>{ g.fillStyle='rgba(18,24,25,.9)'; g.fillRect(0,0,w,h); g.fillStyle='#f0b634'; g.fillRect(0,0,8,h); g.fillStyle='#f2f2ea'; fit(g,text,24,62,w-40,44); }; redraw(t); }
+for(let i=0;i<2;i++){
+  const ctrl=renderer.xr.getController(i); dolly.add(ctrl);
+  const lineG=new T.BufferGeometry().setFromPoints([new T.Vector3(0,0,0),new T.Vector3(0,0,-1)]);
+  const line=new T.Line(lineG,new T.LineBasicMaterial({color:0xbfe6e1,transparent:true,opacity:.8})); line.scale.z=3; ctrl.add(line);
+  const dot=new T.Mesh(new T.SphereGeometry(.008,10,8),new T.MeshBasicMaterial({color:0xf0b634,depthTest:false})); dot.renderOrder=12; scene.add(dot); dot.visible=false;
+  const grip=renderer.xr.getControllerGrip(i); dolly.add(grip); add(grip,B(.035,.035,.11),MAT.dark,0,-.01,.03); add(grip,Cy(.012,.02,10),MAT.chrome,0,.012,-.01);
+  const ring=add(scene,new T.RingGeometry(.03,.038,28),new T.MeshBasicMaterial({color:0xf0b634,transparent:true,opacity:.95,depthTest:false}),0,-10,0); ring.renderOrder=10;
+  const st={ctrl,line,dot,ring,hit:null,held:null,turnReady:true};
+  ctrl.addEventListener('connected',e=>{ ctrl.userData.inputSource=e.data; st.hand=e.data.handedness; });
+  ctrl.addEventListener('disconnected',()=>{ ctrl.userData.inputSource=null; });
+  ctrl.addEventListener('selectstart',()=>{ if(st.hit){ st.held=activate(st.hit.object.userData.target,ctrl); } });
+  ctrl.addEventListener('selectend',()=>{ if(st.held){ release(st.held); st.held=null; } });
+  handState.push(st);
+}
+const tmpM=new T.Matrix4(), rO=new T.Vector3(), rD=new T.Vector3();
+function updateXRPointers(){ let best=null;
+  for(const st of handState){ if(!st.ctrl.userData.inputSource){ st.line.visible=false; st.dot.visible=false; st.ring.visible=false; continue; } st.line.visible=true;
+    tmpM.identity().extractRotation(st.ctrl.matrixWorld); rO.setFromMatrixPosition(st.ctrl.matrixWorld); rD.set(0,0,-1).applyMatrix4(tmpM);
+    const h=pick(rO,rD); st.hit=h;
+    if(h){ st.line.scale.z=h.distance; st.dot.position.copy(h.point); st.dot.visible=true; const t=h.object.userData.target; showHover(st.ring,h,t); if(!best||st.hand==='right') best={h,t}; }
+    else { st.line.scale.z=4; st.dot.visible=false; st.ring.visible=false; } }
+  if(best){ setTip(tipFor(best.t)); tip.position.copy(best.h.point); tip.position.y+=.09; tip.visible=true; } else tip.visible=false; }
+const camW=new T.Vector3(), fwd=new T.Vector3(), right=new T.Vector3();
+function locomotion(dt){ const s=renderer.xr.getSession(); if(!s) return;
+  for(const src of s.inputSources){ const gp=src.gamepad; if(!gp||gp.axes.length<2) continue; const ax=gp.axes.length>=4?gp.axes[2]:gp.axes[0], ay=gp.axes.length>=4?gp.axes[3]:gp.axes[1];
+    if(src.handedness==='left'){ if(Math.hypot(ax,ay)>.15){ camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize(); right.crossVectors(fwd,UP); dolly.position.addScaledVector(fwd,-ay*1.6*dt).addScaledVector(right,ax*1.6*dt); } }
+    else if(src.handedness==='right'){ const st=handState.find(h=>h.hand==='right'); if(!st) continue; if(Math.abs(ax)>.7 && st.turnReady){ snapTurn(ax>0?-PI/6:PI/6); st.turnReady=false; } if(Math.abs(ax)<.3) st.turnReady=true; } } }
+function snapTurn(a){ camera.getWorldPosition(camW); dolly.position.x-=camW.x; dolly.position.z-=camW.z; dolly.position.applyAxisAngle(UP,a); dolly.position.x+=camW.x; dolly.position.z+=camW.z; dolly.rotation.y+=a; }
+function goTo(p){ if(!renderer.xr.isPresenting){ setView(p.name); return; }
+  const want=Math.atan2(-(p.look.x-p.pos.x),-(p.look.z-p.pos.z)); const e=new T.Euler().setFromQuaternion(camera.quaternion,'YXZ');
+  dolly.rotation.set(0,want-e.y,0); const off=new T.Vector3(camera.position.x,0,camera.position.z).applyAxisAngle(UP,dolly.rotation.y);
+  dolly.position.set(p.pos.x-off.x,0,p.pos.z-off.z); tone(660,.06,'sine',.05); }
+
+// Enter VR
+const vrBtn=document.getElementById('vr'), vrNote=document.getElementById('vrnote');
+let pendingStart=0;
+async function initVR(){ if(!('xr' in navigator)){ vrBtn.textContent='VR not available'; vrNote.hidden=false; vrNote.textContent='This browser has no WebXR. Open this page in the Meta Quest Browser on the headset.'; return; }
+  let ok=false; try{ ok=await navigator.xr.isSessionSupported('immersive-vr'); }catch(e){ ok=false; }
+  if(!ok){ vrBtn.textContent='VR not available here'; vrNote.hidden=false; vrNote.textContent='Immersive VR is not available on this device or inside this frame. On the Quest 3, open the standalone copy of this page in the Meta Quest Browser.'; return; }
+  vrBtn.disabled=false; vrBtn.textContent='Enter VR';
+  vrBtn.onclick=async()=>{ if(renderer.xr.isPresenting){ renderer.xr.getSession().end(); return; }
+    try{ const s=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor','hand-tracking']}); await renderer.xr.setSession(s); vrBtn.textContent='Exit VR'; pendingStart=3;
+      s.addEventListener('end',()=>{ vrBtn.textContent='Enter VR'; dolly.position.set(0,0,0); dolly.rotation.set(0,0,0); tip.visible=false; handState.forEach(h=>{h.dot.visible=false;h.ring.visible=false;}); camera.updateProjectionMatrix(); setView('console'); });
+    }catch(err){ vrNote.hidden=false; vrNote.textContent='The headset refused to start VR here ('+(err&&err.name||'error')+'). Open the standalone copy of this page in the Meta Quest Browser.'; } };
+}
+initVR();
+
+/* ---------- per-frame update ---------- */
+const clock=new T.Clock(); let uiT=0, lastScale=S.coilOnCar, lastJog=false;
+const HD_PY=3.5;
+function hdAngleFor(){ const top = S.coilOnMandrel? CL+COIL_R : CL+.255; const yc=top+.15; const s=Math.min(.99,(HD_PY-yc)/HD_L); return Math.asin(s); }
+function update(dt){
+  S.moving=false; S.jogging=false;
+  for(const k in holdCount) if(holdCount[k]>0 && ACT[k]) ACT[k](dt);
+  // mandrel
+  const tgt=S.mandrelTarget==='EXP'?1:0;
+  if(S.mandrelExp!==tgt && !S.estop && S.hydA){ S.mandrelExp = tgt>S.mandrelExp? Math.min(1,S.mandrelExp+.7*dt) : Math.max(0,S.mandrelExp-.7*dt); S.moving=true;
+    if(S.mandrelExp===1 && S.coilOnCar && carSupporting()){ S.coilOnCar=false; S.coilOnMandrel=true; say('Mandrel expanded. Coil is gripped.','info'); }
+    if(S.mandrelExp===0 && S.coilOnMandrel && carSupporting()){ S.coilOnMandrel=false; S.coilOnCar=true; S.thread=0; S.feed=0; say('Mandrel collapsed. Coil is back on the car.','info'); } }
+  // pinch gap
+  const pg=S.pinchClosed?0:1; if(S.pinchGap!==pg && !S.estop){ S.pinchGap+= Math.sign(pg-S.pinchGap)*Math.min(Math.abs(pg-S.pinchGap),2.5*dt); }
+  if(S.shearAnim>0) S.shearAnim=Math.max(0,S.shearAnim-dt*2.5);
+  // visuals
+  arbor.position.x=S.adj;
+  for(const l of leaves){ const r=l.userData.r; const off=(.012*S.mandrelExp); if(r) l.position.set(.78,0,0).addScaledVector(l.userData.dir,r+off); else l.position.set(-.05,0,0).addScaledVector(l.userData.dir,off); }
+  spin.rotation.x=-S.mAngle;
+  car.position.x=S.carX; const cy=carCY(); saddle.position.y=cy; const lb=.27, lt=cy-.95; lift.position.y=(lb+lt)/2; lift.scale.y=Math.max(.05,lt-lb);
+  if(S.coilOnMandrel){ coil.position.set(S.adj+MCX,CL,0); } else { coil.position.set(S.carX,cy,0); }
+  coil.rotation.x=-S.coilAngle;
+  // hold-down
+  const aDown=hdAngleFor(), aUp=.06; hdPivot.rotation.x = aUp+(aDown-aUp)*S.hd;
+  { const a=new T.Vector3(MCX,2.25,-1.8); const b=new T.Vector3(MCX,HD_PY,-1.95).add(new T.Vector3(0,-Math.sin(hdPivot.rotation.x),Math.cos(hdPivot.rotation.x)).multiplyScalar(1.1)); hdCyl(a,b,.7); }
+  if(S.jogging && S.coilOnMandrel && S.hd>=.999) hdRoll.rotation.x += (S.jogging?1:0)*.28*COIL_R/.15*dt*(holdCount.jogR>0?-1:1);
+  // peeler
+  peelPivot.position.y=.55+S.carriage*.14; carriagePost.scale.y=(peelPivot.position.y)/.6; carriagePost.position.y=peelPivot.position.y/2;
+  peelPivot.rotation.x=-.12+.22*S.peelUp; peelPlate.position.z=-S.peelExt*.38;
+  { const tipW=new T.Vector3(0,-.05,-.7+peelPlate.position.z).applyEuler(peelPivot.rotation).add(peelPivot.position);
+    peelCylA(new T.Vector3(-.4,.2,2.55),tipW.clone().setX(-.4),.45); peelCylB(new T.Vector3(.4,.2,2.55),tipW.clone().setX(.4),.45); }
+  // pinch roll
+  const uy=NIP.y+.1+.12*S.pinchGap; upRoll.position.y=uy; chocks.forEach(c=>c.position.y=uy);
+  pinchCyl[0](new T.Vector3(-.86,.25,NIP.z+.24),new T.Vector3(-.86,uy,NIP.z+.24),.6); pinchCyl[1](new T.Vector3(.86,.25,NIP.z+.24),new T.Vector3(.86,uy,NIP.z+.24),.6);
+  blade.position.y=1.48-.3*Math.sin(S.shearAnim*PI);
+  // strip
+  const sx=S.adj+MCX;
+  if(S.coilOnMandrel && S.thread>0){ const a=.72; const s0=new T.Vector3(sx,CL-COIL_R*Math.cos(a),COIL_R*Math.sin(a)); const nip=new T.Vector3(sx,NIP.y,NIP.z); const head=s0.clone().lerp(nip,S.thread);
+    stripA.visible=true; stripA.position.copy(s0); stripA.lookAt(head); stripA.scale.set(1,1,Math.max(.001,s0.distanceTo(head))); }
+  else stripA.visible=false;
+  if(S.coilOnMandrel && S.feed>0){ stripB.visible=true; stripB.position.set(sx,NIP.y,NIP.z); stripB.rotation.set(0,0,0); stripB.scale.set(1,1,S.feed*FEED_LEN); } else stripB.visible=false;
+  for(const s of scraps){ if(s.position.y>.02){ s.userData.v+=9.8*dt; s.position.y=Math.max(.02,s.position.y-s.userData.v*dt); s.rotation.x+=s.userData.spin*dt; if(s.position.y<=.02){ s.rotation.x=0; } } }
+  // laser
+  const lx=carStop(); laserFloor.visible=laserBeam.visible=S.laser; laserFloor.position.x=lx;
+  if(S.laser){ const topY=S.coilOnCar&&Math.abs(S.carX-lx)<COIL_W/2? cy+COIL_R : S.coilOnMandrel? CL+COIL_R : .01; laserBeam.position.set(lx,(4.53+topY)/2,0); laserBeam.scale.y=4.53-topY; }
+  laserHead.position.x=lx;
+  // lights
+  const now=performance.now(); const alarmLive=msg.level==='alarm'&&now-msg.t<6000;
+  const st=[S.estop, alarmLive&&!S.estop, S.hydA&&!S.estop, S.lineRun];
+  stackSeg.forEach((m,i)=>m.material.emissiveIntensity= st[i]? (i===1? (Math.sin(now/180)>0?1.8:.3) : 1.8) : .05);
+  beacon.material.emissiveIntensity = S.moving ? (Math.sin(now/120)>0?2:.4) : .08;
+  for(const c of ctrls){ const d=c.d; if(c.lens) c.lens.material.emissiveIntensity= d.lit&&d.lit()? 1.7 : .05;
+    if(c.knob){ const v= d.get? d.get() : c.val; c.knob.rotation.z += ((v? -.75:.75) - c.knob.rotation.z)*Math.min(1,dt*18); }
+    if(c.cap) c.cap.position.z = c.rest - (c.down>0? .005:0); }
+  // steps
+  if(done.indexOf(false)>=0){ for(let i=0;i<STEPS.length;i++){ if(done[i]) continue; if(STEPS[i][1]()){ done[i]=true; tone(1046,.12,'sine',.05); if(i===STEPS.length-1){ finishT=now; say('Coil loaded, threaded and cropped. Well done.','info'); } } break; } }
+  // throttled textures
+  uiT+=dt; if(uiT>.25){ uiT=0; redraw(hmiTex); redraw(boardTex); }
+  if(lastScale!==S.coilOnCar){ lastScale=S.coilOnCar; redraw(scaleTex); }
+  if(lastJog!==S.jogging){ lastJog=S.jogging; redraw(counterTex); }
+}
+function loop(){ const dt=Math.min(.05,clock.getDelta());
+  if(renderer.xr.isPresenting){ if(pendingStart>0){ pendingStart--; if(pendingStart===0) goTo(PADS.console); } locomotion(dt); updateXRPointers(); hoverRing.visible=false; } else { controls.update(); }
+  update(dt); renderer.render(scene,camera); }
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+setView('console');
+renderer.setAnimationLoop(loop);
+document.getElementById('loading').hidden=true;
+})().catch(err=>{ const l=document.getElementById('loading'); l.hidden=false; l.textContent='Could not build the scene: '+(err&&err.message||err); console.error(err); });
+</script>
